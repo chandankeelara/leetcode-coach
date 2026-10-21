@@ -1,0 +1,26 @@
+# Copy to fly.toml, change `app`, then follow docs/DEPLOY.md.
+app = "your-leetcode-coach"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8731"
+  COACH_DB = "/data/coach.db"
+  COACH_ENV_FILE = "/data/.env"
+
+[mounts]
+  source = "coach_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8731
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

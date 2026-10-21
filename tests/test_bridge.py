@@ -21,6 +21,7 @@ class FakeService:
                 "leetcode_url": "https://leetcode.com/problems/two-sum/",
                 "paraphrase": "find two that add up", "started_at": datetime(2026, 10, 21, 9, 5),
                 "target_min": 20, "instruction": "Give your approach in plain words first.",
+                "mode": "timed",
                 # leaks the service must never let through:
                 "pattern": "arrays-hashmap", "slot": "weakness", "tier": 1, "difficulty": "E"}
 
@@ -64,7 +65,8 @@ def real(tmp_path, monkeypatch):
 # ---- RULE ZERO -----------------------------------------------------------------------------
 def test_next_problem_keys_are_exactly_the_handoff(fake):
     out = server.next_problem()
-    assert set(out) == HANDOFF_KEYS
+    assert set(out) == HANDOFF_KEYS and len(HANDOFF_KEYS) == 9
+    assert out["mode"] == "timed"
     for leak in ("pattern", "slot", "tier", "difficulty"):
         assert leak not in out
 
@@ -75,7 +77,7 @@ def test_next_problem_posts_only_handoff_text(fake):
     assert msg["role"] == "coach" and msg["handout_id"] == 7
     text = msg["content"].lower()
     assert "two sum" in text and "09:05" in text and "20 min" in text
-    for leak in ("arrays-hashmap", "hashmap", "weakness", "tier", "slot"):
+    for leak in ("arrays-hashmap", "hashmap", "weakness", "tier", "slot", "timed", "coached"):
         assert leak not in text
 
 
@@ -88,6 +90,38 @@ def test_next_problem_none(fake, monkeypatch):
 def test_clean_handoff_rejects_missing_keys():
     with pytest.raises(ValueError):
         server.clean_handoff({"handout_id": 1})
+
+
+def _raw(**kw):
+    d = FakeService().next_problem(1)
+    d.update(kw)
+    return d
+
+
+def test_clean_handoff_mode_is_required_and_only_two_values():
+    assert server.HANDOFF_MODES == {"timed", "coached"}
+    assert server.clean_handoff(_raw(mode="coached"))["mode"] == "coached"
+    for bad in ("refire", "warmup", "drill", "growth", "retry", "strict", "", None):
+        with pytest.raises(ValueError):
+            server.clean_handoff(_raw(mode=bad))
+    d = _raw()
+    del d["mode"]
+    with pytest.raises(ValueError):
+        server.clean_handoff(d)
+
+
+def test_statement_coming_posted_when_no_paraphrase(fake, monkeypatch):
+    real_np = fake.next_problem
+    monkeypatch.setattr(fake, "next_problem",
+                        lambda user_id, force_new=False: {**real_np(user_id), "paraphrase": None})
+    server.next_problem()
+    assert [m["content"] for m in fake.messages][1:] == ["Statement coming."]
+    assert fake.messages[1]["handout_id"] == 7
+
+
+def test_no_statement_coming_when_paraphrase_set(fake):
+    server.next_problem()
+    assert len(fake.messages) == 1
 
 
 def test_tool_descriptions_do_not_leak():
@@ -168,11 +202,69 @@ def test_set_statement_tool_ok_and_leak_real_db(real):
     r = server.set_statement(hid, "Use two pointers on the sorted array.")
     assert r["error"].startswith("leak:") and "two pointers" in r["error"]
     assert service.get_statement(hid) is None
+    assert service.list_messages(uid) == []                    # a rejected one posts nothing
     assert server.set_statement(hid, "Return indices of two numbers adding to target.") == {"ok": True}
     assert service.get_statement(hid).startswith("Return indices")
+    (msg,) = service.list_messages(uid)
+    assert msg["content"] == "Return indices of two numbers adding to target."
+    assert msg["handout_id"] == hid and msg["role"] == "coach"
 
 
 def test_set_statement_tool_described_without_leaks():
     tools = {t.name: t for t in asyncio.run(server.mcp.list_tools())}
     assert "set_statement" in tools
     assert "Rejected if it names a technique or a difficulty" in tools["set_statement"].description
+
+
+# ---- status accountability -----------------------------------------------------------------
+def test_status_names_the_missed_days(real):
+    service, uid = real
+    from datetime import date, timedelta
+    from coach import db
+    from coach.models import Attempt, Problem
+    today = date.today()
+    with db.session_scope() as s:
+        s.add(Problem(number=9, title="P", lc_slug="p", difficulty="E", source="bank"))
+        s.flush()
+        s.add(Attempt(user_id=uid, problem_number=9, day=today - timedelta(days=4),
+                      target_min=10, actual_min=5, outcome="clean"))
+    acc = server.coach_status()["accountability"]
+    assert acc["days_missed"] == 3
+    assert acc["missed_days_list"] == [(today - timedelta(days=d)).isoformat() for d in (3, 2, 1)]
+    assert server._days_missed(today.isoformat()) == acc          # the fallback agrees
+
+
+# ---- ledger / log / trap tools on the real service -----------------------------------------
+def test_ledger_log_and_trap_tools_real_db(real):
+    service, uid = real
+    r = server.set_skill("Narrates approach", 3, "said it aloud twice", "up")
+    assert r["created"] and r["was"] is None and r["level"] == 3
+    assert server.set_skill("narrates approach", 4, "again", "up")["was"] == 3
+    assert "error" in server.set_skill("x", 9, "", "")
+    row = server.log_trap_recall("sliding-window", "delete zero keys", "Counter decrement",
+                                 True, False)
+    assert {k: row[k] for k in ("pattern", "recalled", "hit_in_code")} == {
+        "pattern": "sliding-window", "recalled": "yes", "hit_in_code": "no"}
+    assert "error" in server.record_refire("never-retired")
+    assert "error" in server.write_session_log("  ")
+    assert server.write_session_log("# Session")["chars"] == 9
+    summ = server.session_summary()
+    assert [c["level"] for c in summ["skill_changes"]] == [3, 4]
+    assert summ["trap_recall"][0]["cue"] == "Counter decrement"
+    assert summ["problems"] == []
+
+
+def test_new_tools_are_registered():
+    names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert {"log_trap_recall", "record_refire", "set_skill", "write_session_log",
+            "session_summary"} <= names
+
+
+def test_skill_md_defines_timed_mode():
+    import os
+    path = os.path.join(os.path.dirname(server.__file__), "skills", "coach", "SKILL.md")
+    text = open(path, encoding="utf-8").read()
+    assert "answer only direct questions, no prompting" in text
+    for tool in ("log_trap_recall", "set_skill", "write_session_log", "session_summary",
+                 "missed_days_list"):
+        assert tool in text

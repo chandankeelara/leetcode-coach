@@ -4,6 +4,7 @@ No database, no clock: every function takes rows and `today`. Rows may be dicts 
 objects; `_g` reads either. The attempt fields used are: day, outcome, pattern (or
 pattern_slug), problem_number, target_min, actual_min, bugs.
 """
+import re
 from collections import defaultdict
 from datetime import date, timedelta
 
@@ -303,3 +304,95 @@ def report_card(rows, today, horizon_days):
         "throughput": throughput(rows, today), "quality": quality(rows),
         "coverage": coverage(rows), "projection": projection(rows, today, horizon_days),
     }
+
+
+# ---- accountability ------------------------------------------------------------------------
+def missed_days(practice_days, today):
+    """{last_practice_day, days_missed, missed_days_list}: the calendar days strictly between
+    the last practice day before `today` and `today`. Practised yesterday -> 0 and []. Today
+    itself is never counted (the session is today). No practice at all -> None, None, []."""
+    days = [d for d in practice_days if d is not None and d < today]
+    if not days:
+        if any(d == today for d in practice_days if d is not None):
+            return {"last_practice_day": today, "days_missed": 0, "missed_days_list": []}
+        return {"last_practice_day": None, "days_missed": None, "missed_days_list": []}
+    last = max(days)
+    gap = [last + timedelta(days=i) for i in range(1, (today - last).days)]
+    return {"last_practice_day": last, "days_missed": len(gap), "missed_days_list": gap}
+
+
+# ---- pattern-note traps --------------------------------------------------------------------
+# A traps section is a heading that STARTS with one of these ("## Traps", "## Where it bites",
+# "### Common pitfalls"); a heading that merely mentions traps ("no traps here") is not one.
+_TRAP_HEADING = re.compile(r"^(?:common |known |the )?(?:traps?|pitfalls?|gotchas?|where it bites)(?![a-z])")
+_ARROWS = ("->", "→", "=>")
+
+
+def _heading(line):
+    s = line.lstrip()
+    if not s.startswith("#"):
+        return None
+    level = len(s) - len(s.lstrip("#"))
+    return level, s[level:].strip().lower()
+
+
+def _bullet(line):
+    """(indent, text) for a markdown list item, else None."""
+    s = line.lstrip(" \t")
+    indent = len(line) - len(s)
+    for mark in ("- ", "* ", "+ "):
+        if s.startswith(mark):
+            return indent, s[len(mark):]
+    head = s.split(" ", 1)
+    if len(head) == 2 and head[0][:-1].isdigit() and head[0][-1:] in ".)":
+        return indent, head[1]
+    return None
+
+
+def parse_traps(note_md):
+    """Traps from a pattern note: every top-level bullet under a heading that names traps
+    ("## Traps", "## Where it bites", pitfalls, gotchas), until the next heading of the same or
+    a higher level. Continuation lines and sub-bullets join their bullet. A bullet written
+    `cue -> rule` splits into {"cue", "trap"}; without an arrow both are the whole text.
+    Returns [] when the note has no such section."""
+    out, cur, base, in_sec, sec_level, gap = [], None, None, False, 0, False
+
+    def flush():
+        if cur is not None:
+            text = " ".join(" ".join(cur).split())
+            if text:
+                for a in _ARROWS:
+                    if a in text:
+                        cue, trap = (x.strip() for x in text.split(a, 1))
+                        out.append({"cue": cue, "trap": trap})
+                        return
+                out.append({"cue": text, "trap": text})
+
+    for line in (note_md or "").splitlines():
+        h = _heading(line)
+        if h is not None:
+            if in_sec and h[0] <= sec_level:
+                flush()
+                cur, in_sec = None, False
+            if not in_sec and _TRAP_HEADING.match(h[1]):
+                in_sec, sec_level, base, cur = True, h[0], None, None
+            continue
+        if not in_sec:
+            continue
+        b = _bullet(line)
+        if not line.strip():
+            gap = True
+            continue
+        if b is not None and (base is None or b[0] <= base):
+            flush()
+            base, cur = b[0], [b[1]]
+        elif cur is not None:
+            if b is None and gap and not line[:1].isspace():
+                flush()                  # a plain paragraph after the list ends the bullet
+                cur = None
+            else:
+                cur.append(b[1] if b is not None else line.strip())
+        gap = False
+    if in_sec:
+        flush()
+    return out

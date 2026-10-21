@@ -12,7 +12,7 @@ from coach.picker import Handoff
 TODAY = date(2026, 10, 21)
 
 ALLOWED = {"handout_id", "number", "title", "leetcode_url", "paraphrase", "started_at",
-           "target_min", "instruction"}
+           "target_min", "instruction", "mode"}
 
 
 def _pick_all(uid, today=TODAY, limit=500):
@@ -158,3 +158,46 @@ def test_open_handout_is_returned_again(world):
     assert (a.handout_id, a.started_at) == (b.handout_id, b.started_at)
     c = service.next_problem(world, today=TODAY, force_new=True)
     assert c.handout_id != a.handout_id
+
+
+# ---- mode: slot-neutral behaviour flag ------------------------------------------------------
+def test_mode_is_slot_neutral():
+    from typing import get_args
+    from coach.picker import MODE_BY_SLOT, MODES, mode_for
+    modes = set(get_args(Handoff.model_fields["mode"].annotation))
+    assert modes == set(MODES) == {"timed", "coached"}
+    names = set(rules.CORE) | set(SLOT_NAMES) | {"1", "2", "3", "E", "M", "H", "easy", "medium",
+                                                  "hard", "tier1", "tier2"}
+    assert not modes & names                       # never a pattern / slot / tier / difficulty
+    # each mode covers 2+ slots, so the mode alone never pins the slot
+    for m in modes:
+        assert sum(1 for v in MODE_BY_SLOT.values() if v == m) >= 2
+    assert mode_for("warmup") == mode_for("refire") == "timed"
+    assert {mode_for(x) for x in ("drill", "growth", "retry")} == {"coached"}
+    with pytest.raises(ValidationError):
+        Handoff(handout_id=1, number=1, title="t", leetcode_url="u", started_at=datetime.now(),
+                target_min=10, mode="refire")
+
+
+SLOT_NAMES = ("warmup", "drill", "growth", "retry", "refire", "imported", "weakness",
+              "strength", "keeper")
+
+
+def test_mode_follows_the_slot_in_real_handoffs(world):
+    _add_attempt(world, 1000, date(2026, 10, 1))
+    _add_attempt(world, 1010, date(2026, 10, 2))
+    with db.session_scope() as s:
+        s.add(PatternState(user_id=world, pattern_slug="prefix-hashmap",
+                           retired_on=date(2026, 10, 5), refires=[]))
+    got = []
+    for _ in range(3):
+        h = service.next_problem(world, today=TODAY)
+        got.append((h.handout_id, h.mode))
+        assert set(h.model_dump()) == ALLOWED
+        again = service.next_problem(world, today=TODAY)          # re-returned open handout
+        assert again.mode == h.mode
+        service.log_attempt(world, handout_id=h.handout_id, actual_min=5, day=TODAY)
+    with db.session_scope() as s:
+        slot = {h.id: h.slot for h in s.scalars(select(Handout))}
+    assert [(slot[i], m) for i, m in got] == [("refire", "timed"), ("drill", "coached"),
+                                              ("growth", "coached")]

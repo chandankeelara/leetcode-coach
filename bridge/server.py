@@ -25,7 +25,11 @@ from typing import Any
 from mcp.server.mcpserver import Context, MCPServer
 
 HANDOFF_KEYS = frozenset({"handout_id", "number", "title", "leetcode_url", "paraphrase",
-                          "started_at", "target_min", "instruction"})
+                          "started_at", "target_min", "instruction", "mode"})
+# mode is how the coach behaves, never the slot: timed = answer direct questions only,
+# coached = full Socratic. Anything else is refused at the boundary.
+HANDOFF_MODES = frozenset({"timed", "coached"})
+STATEMENT_COMING = "Statement coming."
 DEFAULT_REPORT_DATE = "2026-12-15"
 PROGRESS_EVERY_S = 30.0       # keep-alive so the client's idle timeout never fires
 
@@ -105,6 +109,8 @@ def clean_handoff(raw):
     missing = HANDOFF_KEYS - set(d)
     if missing:
         raise ValueError(f"handoff missing keys {sorted(missing)}")
+    if d["mode"] not in HANDOFF_MODES:
+        raise ValueError(f"handoff mode must be one of {sorted(HANDOFF_MODES)}")
     out = {k: d[k] for k in HANDOFF_KEYS}
     assert set(out) == HANDOFF_KEYS
     return out
@@ -135,26 +141,25 @@ def coach_status() -> dict:
     """Progress briefing: backlog, days missed, streak, retry queue, skills. Progress talk:
     never in or right before a problem handoff."""
     st = _jsonable(svc().status(uid()))
-    st.setdefault("accountability", _days_missed(st.get("today")))
+    if not isinstance(st.get("accountability"), dict):
+        st["accountability"] = _days_missed(st.get("today"))
     return st
 
 
 def _days_missed(today_iso):
-    """{last_practice_day, days_missed}: whole days with no attempt since the last practice
-    day (yesterday practised -> 0). Bridge-side because the opening line needs it plainly."""
+    """Fallback for a service whose status() has no `accountability`: {last_practice_day,
+    days_missed, missed_days_list} from the attempts table (see coach.rules.missed_days)."""
+    from coach import rules
     try:
-        from sqlalchemy import func, select
+        from sqlalchemy import select
         from coach.db import session_scope
         from coach.models import Attempt
         with session_scope() as s:
-            last = s.scalar(select(func.max(Attempt.day)).where(Attempt.user_id == uid()))
+            days = list(s.scalars(select(Attempt.day).where(Attempt.user_id == uid())))
     except Exception:
-        return {"last_practice_day": None, "days_missed": None}
+        return {"last_practice_day": None, "days_missed": None, "missed_days_list": []}
     today = date.fromisoformat(today_iso) if today_iso else date.today()
-    if last is None:
-        return {"last_practice_day": None, "days_missed": None}
-    return {"last_practice_day": last.isoformat(),
-            "days_missed": max(0, (today - last).days - 1)}
+    return _jsonable(rules.missed_days(days, today))
 
 
 @mcp.tool()
@@ -170,16 +175,19 @@ def next_problem(new: bool = False) -> dict:
         return {"handoff": None, "reason": "nothing eligible right now"}
     h = clean_handoff(raw)
     s.post_message(uid(), "coach", render_handoff(h), handout_id=h["handout_id"])
+    if not h.get("paraphrase"):
+        s.post_message(uid(), "coach", STATEMENT_COMING, handout_id=h["handout_id"])
     return h
 
 
 @mcp.tool()
 def set_statement(handout_id: int, text: str) -> dict:
-    """Write the problem statement, examples and constraints in your own words. Rejected if it names a technique or a difficulty."""
+    """Write the problem statement, examples and constraints in your own words. Rejected if it names a technique or a difficulty. On success it is also posted to the chat panel."""
     try:
         svc().set_statement(uid(), handout_id, text)
     except ValueError as e:
         return {"error": str(e)}
+    svc().post_message(uid(), "coach", text.strip(), handout_id=handout_id)
     return {"ok": True}
 
 
@@ -250,7 +258,8 @@ def log_attempt(handout_id: int, bugs: int, hints: int, optimal: bool, derived_c
 
 @mcp.tool()
 def reveal(handout_id: int) -> dict:
-    """What the problem was testing. Refused until the attempt is logged."""
+    """What the problem was testing. Refused until the attempt is logged. After a re-fire it
+    also carries trap_quiz {pattern, cues: [{cue, trap}]} for the spoken trap quiz."""
     try:
         return _jsonable(svc().reveal(handout_id))
     except Exception as e:                   # RevealBlocked and friends
@@ -274,6 +283,53 @@ def lint(code: str) -> dict:
 def report(target_date: str = DEFAULT_REPORT_DATE) -> dict:
     """Readiness projection to target_date (YYYY-MM-DD). Progress talk."""
     return _jsonable(svc().report(uid(), target_date))
+
+
+@mcp.tool()
+def log_trap_recall(pattern_slug: str, trap: str, cue: str, recalled: bool,
+                    hit_in_code: bool) -> dict:
+    """Record one trap-quiz answer (after reveal of a re-fire). Returns the stored row:
+    date, pattern, trap, cue, recalled, hit_in_code."""
+    try:
+        return _jsonable(svc().log_trap_recall(uid(), pattern_slug, trap, cue, recalled,
+                                               hit_in_code))
+    except ValueError as e:
+        return {"error": str(e)}
+
+
+@mcp.tool()
+def record_refire(pattern_slug: str) -> dict:
+    """Add today's date to a retired pattern's re-fire dates (once per day)."""
+    try:
+        return _jsonable(svc().record_refire(uid(), pattern_slug))
+    except ValueError as e:
+        return {"error": str(e)}
+
+
+@mcp.tool()
+def set_skill(name: str, level: int, evidence: str, trend: str) -> dict:
+    """Update one skill-ledger entry: level 0-5, evidence, trend. Session end only, one call per
+    skill the session produced evidence for. Returns was/level."""
+    try:
+        return _jsonable(svc().set_skill(uid(), name, level, evidence, trend))
+    except ValueError as e:
+        return {"error": str(e)}
+
+
+@mcp.tool()
+def write_session_log(markdown: str) -> dict:
+    """Store today's session log (markdown, session-log template format). Overwrites."""
+    try:
+        return _jsonable(svc().write_session_log(uid(), markdown))
+    except ValueError as e:
+        return {"error": str(e)}
+
+
+@mcp.tool()
+def session_summary() -> dict:
+    """Today's handouts, attempts, reveals, ledger, queue and trap-quiz changes, for writing the
+    session log. Progress talk: session end only, never while a problem is open."""
+    return _jsonable(svc().session_summary(uid()))
 
 
 def main():

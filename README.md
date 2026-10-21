@@ -5,15 +5,21 @@ Personal LeetCode coaching app: state store, CLI, and a local web UI.
 ## Setup
 
     python -m venv .venv
-    .venv/Scripts/python -m pip install fastapi uvicorn jinja2 python-multipart itsdangerous argon2-cffi httpx pytest sqlalchemy websockets
+    .venv/Scripts/python -m pip install -r requirements.txt
 
     .venv/Scripts/python -m coach.cli create-user chandan     # prompts for a password
     .venv/Scripts/python -m coach.cli migrate <old-repo-path>  # idempotent
     .venv/Scripts/python -m coach.cli verify                   # must match the old status.py
     ./start.ps1                                                # http://127.0.0.1:8731
 
-`COACH_SECRET` signs the session cookie. If it is not set, it is generated into `.env` on
-first run. `COACH_DB` picks the SQLite file (default `./coach.db`).
+Or in Docker: `docker compose up --build`. See `docs/DEPLOY.md` (local, Docker, Fly.io, backups,
+env vars, HTTPS), `docs/CUTOVER.md` (retiring the markdown repo) and `docs/PRODUCT.md` (roadmap).
+
+Env: `COACH_SECRET` signs the session cookie (generated into `.env` on first run if unset).
+`COACH_DB` picks the SQLite file (default `./coach.db`). `COACH_DB_URL` takes any SQLAlchemy URL
+and wins over `COACH_DB`. `COACH_USER` picks the bridge's user.
+
+Backup: `./scripts/backup.ps1` (keeps the newest 30).
 
 Tests: `.venv/Scripts/python -m pytest`
 

@@ -96,6 +96,8 @@ def main(argv=None):
     p.add_argument("--notes", default="")
     p = sub.add_parser("reveal")
     p.add_argument("handout_id", type=int)
+    p = sub.add_parser("ext-token", help="print the browser-extension token")
+    p.add_argument("--rotate", action="store_true")
     args = ap.parse_args(argv)
 
     db.init()
@@ -136,6 +138,9 @@ def main(argv=None):
             bugs=args.bugs, optimal=args.optimal, derived_cold=args.cold, hints=args.hints,
             notes=args.notes, abandoned=args.abandoned)
         print(json.dumps(res))
+    elif args.cmd == "ext-token":
+        from . import ext
+        print(ext.ext_token_rotate() if args.rotate else ext.ext_token_get_or_create())
     elif args.cmd == "reveal":
         print(json.dumps(service.reveal(args.handout_id), indent=2))
 

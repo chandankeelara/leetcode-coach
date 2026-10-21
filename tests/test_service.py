@@ -214,3 +214,196 @@ def test_statement_title_words_allowed(world):
     other = _handout_for(world, 8)
     with pytest.raises(ValueError, match="linked list"):
         service.set_statement(world, other, "Reverse a linked list.")
+
+
+# ---- accountability ------------------------------------------------------------------------
+def test_missed_days_pure():
+    from coach.rules import missed_days
+    d = lambda m, dd: date(2026, m, dd)
+    r = missed_days([d(10, 1), d(10, 12)], d(10, 18))
+    assert r["last_practice_day"] == d(10, 12) and r["days_missed"] == 5
+    assert r["missed_days_list"] == [d(10, 13), d(10, 14), d(10, 15), d(10, 16), d(10, 17)]
+    assert missed_days([d(10, 17)], d(10, 18))["missed_days_list"] == []
+    assert missed_days([d(10, 18)], d(10, 18))["days_missed"] == 0       # practised today only
+    assert missed_days([], d(10, 18)) == {"last_practice_day": None, "days_missed": None,
+                                          "missed_days_list": []}
+
+
+def test_status_accountability(world):
+    service.log_attempt(world, number=1000, actual_min=5, day=TODAY - timedelta(days=3))
+    acc = service.status(world, today=TODAY)["accountability"]
+    assert acc["days_missed"] == 2
+    assert acc["missed_days_list"] == [TODAY - timedelta(days=2), TODAY - timedelta(days=1)]
+
+
+# ---- trap quiz after a re-fire -------------------------------------------------------------
+NOTE = """# Sliding Window
+
+## The signal
+- not a trap -> ignore me
+
+## Where it bites
+Written as **cue -> rule**.
+
+- constraint allows negatives  ->  NOT a window. Use prefix sums
+  plus a hashmap.
+- counting with a `Counter` -> delete keys that hit zero.
+  - sub-point joins its parent
+- a bullet with no arrow
+
+## Complexity
+- O(n) -> not a trap either
+"""
+
+
+def test_parse_traps_sections_and_fallback():
+    from coach.rules import parse_traps
+    assert parse_traps(NOTE) == [
+        {"cue": "constraint allows negatives",
+         "trap": "NOT a window. Use prefix sums plus a hashmap."},
+        {"cue": "counting with a `Counter`",
+         "trap": "delete keys that hit zero. sub-point joins its parent"},
+        {"cue": "a bullet with no arrow", "trap": "a bullet with no arrow"},
+    ]
+    assert parse_traps("## Traps\n* a -> b\n\n### deeper\n* c -> d\n## End\n* e") == [
+        {"cue": "a", "trap": "b"}, {"cue": "c", "trap": "d"}]
+    assert parse_traps("") == [] and parse_traps(None) == [] and parse_traps("# x\n- y") == []
+
+
+def _refire_world(uid, note=NOTE):
+    service.log_attempt(uid, number=1020, actual_min=5, day=date(2026, 10, 1))
+    with db.session_scope() as s:
+        s.add(PatternState(user_id=uid, pattern_slug="prefix-hashmap",
+                           retired_on=date(2026, 10, 5), refires=[], note_md=note))
+
+
+def test_reveal_of_refire_carries_trap_quiz(world):
+    _refire_world(world)
+    h = service.next_problem(world, today=TODAY)
+    assert h.mode == "timed"
+    service.log_attempt(world, handout_id=h.handout_id, actual_min=5, day=TODAY)
+    r = service.reveal(h.handout_id)
+    assert r["slot"] == "refire" and r["mode"] == "timed"
+    assert r["trap_quiz"]["pattern"] == "prefix-hashmap"
+    assert [c["cue"] for c in r["trap_quiz"]["cues"]][:2] == ["constraint allows negatives",
+                                                              "counting with a `Counter`"]
+    # log_attempt already counted the re-fire; record_refire is idempotent per day
+    assert service.record_refire(world, "prefix-hashmap", today=TODAY)["refires"] == [
+        TODAY.isoformat()]
+    later = TODAY + timedelta(days=8)
+    assert service.record_refire(world, "prefix-hashmap", today=later)["refires"] == [
+        TODAY.isoformat(), later.isoformat()]
+    with pytest.raises(ValueError):
+        service.record_refire(world, "heap", today=TODAY)
+
+
+def test_refire_without_traps_section_gives_empty_cues(world):
+    _refire_world(world, note="# no traps here\n- just a line")
+    h = service.next_problem(world, today=TODAY)
+    service.log_attempt(world, handout_id=h.handout_id, actual_min=5, day=TODAY)
+    assert service.reveal(h.handout_id)["trap_quiz"] == {"pattern": "prefix-hashmap", "cues": []}
+
+
+def test_reveal_of_coached_problem_has_no_trap_quiz(world):
+    h = service.next_problem(world, today=TODAY)          # no retired pattern: not a re-fire
+    service.log_attempt(world, handout_id=h.handout_id, actual_min=5, day=TODAY)
+    r = service.reveal(h.handout_id)
+    assert "trap_quiz" not in r and r["slot"] != "refire"
+
+
+def test_log_trap_recall_matches_csv_columns(world):
+    r = service.log_trap_recall(world, "sliding-window", "delete zero keys",
+                                "Counter decrement", True, False, today=TODAY)
+    csv_cols = "date,pattern,trap,cue,recalled,hit_in_code".split(",")
+    assert [k for k in r if k != "id"] == csv_cols
+    assert (r["date"], r["recalled"], r["hit_in_code"]) == (TODAY.isoformat(), "yes", "no")
+
+
+# ---- ledger --------------------------------------------------------------------------------
+def test_set_skill_upserts_and_logs_event(world):
+    from coach.models import Skill, SkillEvent
+    r = service.set_skill(world, "two-pointers", 3, "17 min, 0 bugs", "up", today=TODAY)
+    assert (r["created"], r["was"], r["level"]) == (False, 4, 3)       # matched by slug
+    r2 = service.set_skill(world, "Edge-case narration", 1, "missed empty input", "flat",
+                           today=TODAY)
+    assert r2["created"] and r2["was"] is None
+    with db.session_scope() as s:
+        k = s.get(Skill, r2["skill_id"])
+        assert (k.kind, k.pattern_slug, k.updated_on) == ("meta", None, TODAY)
+        evs = s.scalars(select(SkillEvent).order_by(SkillEvent.id)).all()
+        assert [(e.level, e.day) for e in evs] == [(3, TODAY), (1, TODAY)]
+    new_pat = service.set_skill(world, "union-find", 1, "first look", "", today=TODAY)
+    with db.session_scope() as s:
+        assert s.get(Skill, new_pat["skill_id"]).kind == "pattern"
+    for bad in (-1, 6, 2.5, True):
+        with pytest.raises(ValueError):
+            service.set_skill(world, "two-pointers", bad, "", "", today=TODAY)
+
+
+# ---- session log and summary ---------------------------------------------------------------
+def test_write_session_log_creates_and_overwrites(world):
+    from coach.models import CoachSession
+    sid = service.write_session_log(world, "# Session 2026-10-21\n", today=TODAY)["session_id"]
+    service.end_session(sid)
+    assert service.write_session_log(world, "# v2", today=TODAY)["session_id"] == sid
+    with db.session_scope() as s:
+        assert s.get(CoachSession, sid).log_md == "# v2"
+    with pytest.raises(ValueError):
+        service.write_session_log(world, "", today=TODAY)
+
+
+def test_session_summary_hides_open_handouts_pattern(world):
+    a = service.next_problem(world, today=TODAY)
+    service.log_attempt(world, handout_id=a.handout_id, actual_min=30, bugs=2, hints=1,
+                        notes="slow", day=TODAY)
+    b = service.next_problem(world, today=TODAY)             # still open
+    k = service.set_skill(world, "two-pointers", 3, "e", "up", today=TODAY)
+    summ = service.session_summary(world, today=TODAY)
+    p1, p2 = summ["problems"]
+    assert p1["handout_id"] == a.handout_id and p1["attempt"]["bugs"] == 2
+    assert p1["reveal"]["pattern"] and p1["reveal"]["slot"]
+    assert p2["handout_id"] == b.handout_id and p2["status"] == "open"
+    assert p2["reveal"] is None and p2["attempt"] is None
+    assert [r["problem_number"] for r in summ["retry"]["added"]] == [a.number]
+    assert summ["skill_changes"] == [{"name": k["name"], "level": 3, "evidence": "e"}]
+    assert service.session_summary(world, today=TODAY + timedelta(days=1))["problems"] == []
+
+
+# ---- additive migration --------------------------------------------------------------------
+def test_init_adds_missing_columns_to_old_db(tmp_path):
+    import sqlite3
+    path = tmp_path / "old.db"
+    con = sqlite3.connect(path)
+    con.execute("CREATE TABLE skills (id INTEGER PRIMARY KEY, user_id INTEGER, name VARCHAR(128),"
+                " kind VARCHAR(8), pattern_slug VARCHAR(64), level INTEGER, trend VARCHAR(64),"
+                " evidence TEXT)")
+    con.execute("INSERT INTO skills VALUES (1, 1, 'x', 'meta', NULL, 2, '', '')")
+    con.commit()
+    con.close()
+    db.init(str(path))
+    con = sqlite3.connect(path)
+    cols = {r[1] for r in con.execute("PRAGMA table_info(skills)")}
+    con.close()
+    assert "updated_on" in cols
+    assert db.add_missing_columns(db.get_engine()) == []          # idempotent
+    from coach.models import Skill
+    with db.session_scope() as s:
+        assert s.get(Skill, 1).updated_on is None and s.get(Skill, 1).level == 2
+
+
+def test_missed_trap_restarts_refire_count(world):
+    """PLAN.md: a missed trap restarts the three re-fires."""
+    from coach import service
+    from coach.db import session_scope
+    from coach.models import PatternState
+    from datetime import date
+    uid = world
+    with session_scope() as s:
+        s.add(PatternState(user_id=uid, pattern_slug="sliding-window",
+                           retired_on=date(2026, 10, 1), refires=["2026-10-10"]))
+    service.log_trap_recall(uid, "sliding-window", "stale max", "window shrink", True, False)
+    with session_scope() as s:
+        assert s.scalars(select(PatternState).where(PatternState.user_id == uid)).first().refires == ["2026-10-10"]
+    service.log_trap_recall(uid, "sliding-window", "stale max", "window shrink", False, True)
+    with session_scope() as s:
+        assert s.scalars(select(PatternState).where(PatternState.user_id == uid)).first().refires == []

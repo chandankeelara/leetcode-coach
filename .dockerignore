@@ -1,0 +1,11 @@
+.venv
+.git
+__pycache__
+*.pyc
+*.db
+*.log
+.env
+.mcp.json
+spike
+tests
+.pytest_cache

@@ -9,6 +9,7 @@ internal `Pick` and in the handouts table; `service.reveal()` gives them back af
 """
 from dataclasses import dataclass
 from datetime import date, datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
@@ -21,10 +22,23 @@ from . import state
 INSTRUCTION = "Give your approach in plain words before any code."
 SLOT_ORDER = ["warmup", "drill", "growth", "retry"]
 
+# How the coach behaves while the problem is open. Slot-neutral on purpose: two values, each
+# shared by several slots, so the mode alone never names the slot, a pattern or a tier.
+#   timed   - strength keeper / re-fire: coach silent, answers direct questions only.
+#   coached - drill / growth / retry: full Socratic coaching.
+MODES = ("timed", "coached")
+MODE_BY_SLOT = {"warmup": "timed", "refire": "timed",
+                "drill": "coached", "growth": "coached", "retry": "coached"}
+
+
+def mode_for(slot):
+    """Handoff mode for an internal slot. Unknown slots are coached."""
+    return MODE_BY_SLOT.get(slot, "coached")
+
 
 class Handoff(BaseModel):
     """The ONLY thing the picker returns to the outside. No pattern, slot, tier, difficulty or
-    progress. A test pins the field set."""
+    progress. A test pins the field set. `mode` is timed|coached (see MODES), never a slot."""
     model_config = ConfigDict(extra="forbid")
 
     handout_id: int
@@ -35,6 +49,7 @@ class Handoff(BaseModel):
     started_at: datetime
     target_min: int
     instruction: str = INSTRUCTION
+    mode: Literal["timed", "coached"] = "coached"
 
 
 @dataclass
@@ -179,5 +194,5 @@ def handoff_for(h, problem):
     return Handoff(
         handout_id=h.id, number=problem.number, title=problem.title,
         leetcode_url=leetcode_url(problem.lc_slug), paraphrase=problem.paraphrase,
-        started_at=h.handed_at, target_min=h.target_min,
+        started_at=h.handed_at, target_min=h.target_min, mode=mode_for(h.slot),
     )

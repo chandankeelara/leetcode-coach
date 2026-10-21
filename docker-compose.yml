@@ -1,0 +1,15 @@
+services:
+  coach:
+    build: .
+    ports:
+      - "127.0.0.1:8731:8731"
+    environment:
+      COACH_DB: /data/coach.db
+      # Set a long random value; without it a key is generated into /data/.env.
+      COACH_SECRET: ${COACH_SECRET:-}
+    volumes:
+      - coach-data:/data
+    restart: unless-stopped
+
+volumes:
+  coach-data:

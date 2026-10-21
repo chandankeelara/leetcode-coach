@@ -1,0 +1,14 @@
+# Pinned from the dev venv on 2026-10-21. Direct dependencies only.
+fastapi==0.157.0
+uvicorn==0.54.0
+jinja2==3.1.6
+python-multipart==0.0.32
+argon2-cffi==25.1.0
+itsdangerous==2.2.0
+httpx==0.28.1
+sqlalchemy==2.1.6
+mcp==2.3.0
+websockets==17.3
+pytest==9.1.1
+# Only if COACH_DB_URL points at Postgres (not pinned, not tested):
+# psycopg[binary]

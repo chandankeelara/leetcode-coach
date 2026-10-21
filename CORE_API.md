@@ -28,8 +28,16 @@ Only `next_problem()` and `reveal()` carry problem data, and both are safe:
 | `started_at` | datetime | server clock, stamped at handout; he never types it |
 | `target_min` | int | |
 | `instruction` | str | always "Give your approach in plain words before any code." |
+| `mode` | `"timed"` or `"coached"` | how the coach behaves; slot-neutral (below) |
 
-Nothing else. `h.model_dump()` / `h.model_dump_json()` are safe to send to a browser.
+Nothing else (9 keys; the bridge refuses any other set, and any other mode value).
+
+`mode` is derived from the internal slot by `picker.mode_for`, and each value covers several
+slots, so it never names a slot, pattern, tier or difficulty:
+
+* `timed` = warm-up / strength keeper and re-fire. The coach answers only direct questions,
+  no prompting, until he submits.
+* `coached` = drill, growth, retry. Full Socratic coaching. `h.model_dump()` / `h.model_dump_json()` are safe to send to a browser.
 
 ## Signatures
 
@@ -65,9 +73,34 @@ log_attempt(user_id: int, handout_id: int | None = None, number: int | None = No
 #   appends to its refires.
 
 reveal(handout_id: int) -> dict                             # raises RevealBlocked until logged
-#   -> {"handout_id","number","title","slot","pattern","pattern_name","tier"}
+#   -> {"handout_id","number","title","slot","mode","pattern","pattern_name","tier"}
+#   a re-fire handout adds "trap_quiz": {"pattern", "cues": [{"cue", "trap"}]}, parsed by
+#   rules.parse_traps from pattern_state.note_md: top-level bullets under a heading starting
+#   "Traps" / "Where it bites" / "Pitfalls" / "Gotchas"; `cue -> rule` splits; [] if none.
 burn_pattern(user_id: int, slug: str, reason: str = "", today: date | None = None) -> int
 #   RULE ZERO leak: pattern is out of play for the current session (the picker honours it)
+
+# re-fires and the trap quiz
+record_refire(user_id: int, pattern_slug: str, today=None) -> dict   # {"pattern", "refires"}
+#   appends today to pattern_state.refires, once per day (log_attempt on a re-fire handout
+#   already does). ValueError if the pattern has no state row.
+log_trap_recall(user_id, pattern_slug, trap, cue, recalled: bool, hit_in_code: bool,
+                today=None) -> dict
+#   -> {"id","date","pattern","trap","cue","recalled","hit_in_code"}  (data/trap_recall.csv
+#   columns; booleans stored "yes"/"no")
+
+# ledger and session log (session end)
+set_skill(user_id, name, level: int, evidence="", trend="", today=None) -> dict
+#   upsert by name (exact, case-insensitive, then pattern slug) + a skill_events row dated today.
+#   New skill: kind "pattern" if name is a pattern slug/name, else "meta". ValueError unless 0-5.
+#   -> {"skill_id","name","was","level","trend","evidence","created"}
+write_session_log(user_id, markdown, today=None) -> dict     # {"session_id", "chars"}
+#   sessions.log_md of today's latest session (ended or not); creates the row if none.
+session_summary(user_id, today=None) -> dict
+#   {"today","session_id","problems":[{handout_id,number,title,handed_at,target_min,status,
+#     mode,attempt|None,reveal|None}],"attempts_without_handout","skill_changes":[{name,level,
+#     evidence}],"retry":{"added","cleared","bumped"},"trap_recall":[...]}
+#   reveal (slot, pattern, pattern_name, tier) only for LOGGED handouts. Progress talk.
 
 set_statement(user_id: int, handout_id: int, text: str) -> dict   # {"ok", "handout_id", "number"}
 #   coach-written statement, stored in problems.paraphrase (overwrites), returned in Handoff.paraphrase.
@@ -84,7 +117,10 @@ status(user_id: int, today: date | None = None) -> dict
 #              tier2_open, attempts_needed, ready_1_per_day, ready_at_55},
 #    "retry": [{problem_number,title,attempts,age,wait,due,last_on,reason}],
 #    "refire": [{pattern,age,due,refires_done,last_touch}],
-#    "blocklist": [numbers], "weakest": [5 x skill], "strongest": [skill, level 4+]}
+#    "blocklist": [numbers], "weakest": [5 x skill], "strongest": [skill, level 4+],
+#    "accountability": {last_practice_day, days_missed, missed_days_list: [dates]}}
+#   missed_days_list = calendar days strictly between the last practice day and today
+#   (rules.missed_days).
 report(user_id: int, target_date: date | str | None = None, today: date | None = None) -> dict
 #   report.py as data: {"throughput","quality","coverage","projection", ...}; {} with no attempts.
 
@@ -102,7 +138,9 @@ Exception: `service.RevealBlocked`.
 
 ## Other modules the builders may use
 
-* `coach.db`: `init(path=None)`, `session_scope()` (context manager), `new_session()`.
+* `coach.db`: `init(path=None)`, `session_scope()` (context manager), `new_session()`,
+  `add_missing_columns(engine)`: run by `init`; adds model columns an existing sqlite file
+  lacks (additive, nullable only). First use: `skills.updated_on`.
 * `coach.models`: all tables (users, patterns, problems, attempts, handouts, sessions, skills,
   skill_events, retry_items, pattern_state, burned, oa_sims, trap_recall, config, events,
   coach_messages).
@@ -111,6 +149,16 @@ Exception: `service.RevealBlocked`.
 * `coach.rules`: the pure functions (`backlog`, `streak`, `tier_progress`, `retry_due`,
   `refire_due`, `blocklist`, `outcome`, `report_card`, ...), taking rows + `today`.
 * `coach.picker.pick_next(session, user_id, today)` is the lower level; prefer `next_problem`.
+
+## MCP bridge tools (`bridge/server.py`)
+
+`coach_status`, `next_problem`, `set_statement`, `wait_for_event`, `say`, `log_attempt`,
+`reveal`, `burn_pattern`, `lint`, `report`, and (new) `log_trap_recall`, `record_refire`,
+`set_skill`, `write_session_log`, `session_summary`. Chat side effects:
+
+* `next_problem` posts the handoff text (never the mode), then "Statement coming." when
+  `paraphrase` is null.
+* `set_statement` posts the statement to the chat on success (nothing on a leak refusal).
 
 ## CLI
 

@@ -98,6 +98,7 @@ class Skill(Base):
     level: Mapped[int] = mapped_column(Integer)                  # 0-5
     trend: Mapped[str] = mapped_column(String(64), default="")
     evidence: Mapped[str] = mapped_column(Text, default="")
+    updated_on: Mapped[date | None] = mapped_column(Date, nullable=True)   # last set_skill day
 
 
 class SkillEvent(Base):

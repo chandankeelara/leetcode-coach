@@ -18,7 +18,7 @@ from . import picker, rules, state
 from .catalog import default_target, pattern_name, pattern_tier
 from .db import session_scope
 from .models import (Attempt, Burned, CoachMessage, CoachSession, Event, Handout, Pattern,
-                     PatternState, Problem, RetryItem, Skill, User)
+                     PatternState, Problem, RetryItem, Skill, SkillEvent, TrapRecall, User)
 
 _hasher = PasswordHasher()
 
@@ -123,6 +123,7 @@ def status(user_id, today=None):
             "blocklist": sorted(rules.blocklist(atts, handouts, today, cfg["block_days"])),
             "weakest": [row(k) for k in weakest],
             "strongest": [row(k) for k in strongest],
+            "accountability": rules.missed_days([a.day for a in atts], today),
         }
 
 
@@ -322,7 +323,7 @@ def _update_pattern_state(s, user_id, slug, handout, day):
     ps = s.scalars(select(PatternState).where(
         PatternState.user_id == user_id, PatternState.pattern_slug == slug)).first()
     if handout is not None and handout.slot == "refire" and ps is not None:
-        ps.refires = list(ps.refires or []) + [day.isoformat()]
+        _append_refire(ps, day)
         return
     if ps is not None and ps.retired_on:
         return
@@ -335,9 +336,69 @@ def _update_pattern_state(s, user_id, slug, handout, day):
             ps.retired_on = day
 
 
+def _append_refire(ps, day):
+    """Add `day` to pattern_state.refires once (a re-fire is counted once per day)."""
+    iso = day.isoformat()
+    cur = list(ps.refires or [])
+    if iso not in cur:
+        ps.refires = cur + [iso]
+
+
+def record_refire(user_id, pattern_slug, today=None):
+    """Append today's date to the pattern's refires (idempotent per day). `log_attempt` already
+    does this for a re-fire handout. ValueError if the pattern has no state (never retired).
+    Returns {"pattern", "refires": [...]}."""
+    day = _today(today)
+    with session_scope() as s:
+        ps = s.scalars(select(PatternState).where(
+            PatternState.user_id == user_id, PatternState.pattern_slug == pattern_slug)).first()
+        if ps is None:
+            raise ValueError(f"no pattern state for {pattern_slug!r}; it was never retired")
+        _append_refire(ps, day)
+        return {"pattern": pattern_slug, "refires": list(ps.refires)}
+
+
+def _yn(v):
+    if isinstance(v, str):
+        return v.strip().lower()
+    return "yes" if v else "no"
+
+
+def log_trap_recall(user_id, pattern_slug, trap, cue, recalled, hit_in_code, today=None):
+    """One spoken trap-quiz answer. A trap_recall row with the columns of the old
+    data/trap_recall.csv (date, pattern, trap, cue, recalled, hit_in_code); booleans are
+    stored as "yes"/"no". Returns that row as a dict (plus "id")."""
+    day = _today(today)
+    with session_scope() as s:
+        r = TrapRecall(user_id=user_id, day=day, pattern=pattern_slug or "", trap=trap or "",
+                       cue=cue or "", recalled=_yn(recalled), hit_in_code=_yn(hit_in_code))
+        s.add(r)
+        s.flush()
+        # PLAN.md: "three re-fires, 7-14 days apart. A missed trap restarts the count."
+        if _yn(recalled) == "no":
+            ps = s.scalars(select(PatternState).where(
+                PatternState.user_id == user_id, PatternState.pattern_slug == pattern_slug)).first()
+            if ps is not None:
+                ps.refires = []
+        return _trap_row(r)
+
+
+def _trap_row(r):
+    return {"id": r.id, "date": r.day.isoformat(), "pattern": r.pattern, "trap": r.trap,
+            "cue": r.cue, "recalled": r.recalled, "hit_in_code": r.hit_in_code}
+
+
+def trap_quiz(user_id, pattern_slug, s):
+    """{pattern, cues: [{cue, trap}]} from the pattern note's traps section ([] if none)."""
+    ps = s.scalars(select(PatternState).where(
+        PatternState.user_id == user_id, PatternState.pattern_slug == pattern_slug)).first()
+    return {"pattern": pattern_slug, "cues": rules.parse_traps(ps.note_md if ps else "")}
+
+
 # ---- reveal / burn -------------------------------------------------------------------------
 def reveal(handout_id):
-    """Pattern + slot of a handout. Only after its attempt is logged."""
+    """Pattern + slot of a handout. Only after its attempt is logged. A re-fire handout also
+    carries `trap_quiz` (see trap_quiz)."""
     with session_scope() as s:
         h = s.get(Handout, handout_id)
         if h is None:
@@ -346,9 +407,13 @@ def reveal(handout_id):
             raise RevealBlocked("log the attempt first; the pattern is revealed afterwards")
         p = s.get(Problem, h.problem_number)
         slug = h.pattern_slug or p.pattern_slug
-        return {"handout_id": h.id, "number": p.number, "title": p.title, "slot": h.slot,
-                "pattern": slug, "pattern_name": pattern_name(slug) if slug else None,
-                "tier": pattern_tier(slug) if slug else None}
+        out = {"handout_id": h.id, "number": p.number, "title": p.title, "slot": h.slot,
+               "mode": picker.mode_for(h.slot),
+               "pattern": slug, "pattern_name": pattern_name(slug) if slug else None,
+               "tier": pattern_tier(slug) if slug else None}
+        if h.slot == "refire" and slug:
+            out["trap_quiz"] = trap_quiz(h.user_id, slug, s)
+        return out
 
 
 def burn_pattern(user_id, slug, reason="", today=None):
@@ -423,3 +488,126 @@ def report(user_id, target_date=None, today=None):
     with session_scope() as s:
         atts = state.user_attempts(s, user_id)
         return rules.report_card(atts, today, horizon)
+
+
+# ---- the ledger (written by the coach at session end) --------------------------------------
+def set_skill(user_id, name, level, evidence="", trend="", today=None):
+    """Upsert a skill by name (exact, then case-insensitive, then pattern slug) and insert a
+    skill_events row dated today. A new skill is kind "pattern" when `name` is a pattern's
+    slug or name, else "meta". ValueError unless 0 <= level <= 5.
+    Returns {"skill_id", "name", "was", "level", "trend", "evidence", "created"}."""
+    day = _today(today)
+    if isinstance(level, bool) or not isinstance(level, int) or not 0 <= level <= 5:
+        raise ValueError(f"level must be an int 0-5, got {level!r}")
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("empty skill name")
+    with session_scope() as s:
+        skills = state.user_skills(s, user_id)
+        k = (next((x for x in skills if x.name == name), None)
+             or next((x for x in skills if x.name.lower() == name.lower()), None)
+             or next((x for x in skills if x.pattern_slug == name.lower()), None))
+        created = k is None
+        was = None if created else k.level
+        if created:
+            pat = s.scalars(select(Pattern).where(
+                (Pattern.slug == name.lower()) | (Pattern.name == name))).first()
+            k = Skill(user_id=user_id, name=pat.name if pat else name,
+                      kind="pattern" if pat else "meta",
+                      pattern_slug=pat.slug if pat else None, level=level)
+            s.add(k)
+        k.level = level
+        k.evidence = evidence or ""
+        k.trend = trend or ""
+        k.updated_on = day
+        s.flush()
+        s.add(SkillEvent(skill_id=k.id, day=day, level=level, evidence=evidence or ""))
+        return {"skill_id": k.id, "name": k.name, "was": was, "level": level,
+                "trend": k.trend, "evidence": k.evidence, "created": created}
+
+
+# ---- the session log -----------------------------------------------------------------------
+def _latest_session(s, user_id, day):
+    return s.scalars(select(CoachSession).where(
+        CoachSession.user_id == user_id, CoachSession.day == day)
+        .order_by(CoachSession.id.desc())).first()
+
+
+def write_session_log(user_id, markdown, today=None):
+    """Store the session log (markdown, templates/session_log.md format) in sessions.log_md
+    for today's latest session (ended or not), creating the row if there is none. Overwrites.
+    Returns {"session_id", "chars"}."""
+    day = _today(today)
+    markdown = (markdown or "").strip()
+    if not markdown:
+        raise ValueError("empty session log")
+    with session_scope() as s:
+        row = _latest_session(s, user_id, day) or state.current_session(s, user_id, day)
+        row.log_md = markdown
+        return {"session_id": row.id, "chars": len(markdown)}
+
+
+def _attempt_row(a):
+    return {"attempt_id": a.id, "number": a.problem_number, "target_min": a.target_min,
+            "actual_min": a.actual_min, "bugs": a.bugs, "hints": a.hints,
+            "optimal": a.optimal, "derived_cold": a.derived_cold, "outcome": a.outcome,
+            "notes": a.notes}
+
+
+def session_summary(user_id, today=None):
+    """Everything today produced, so the coach writes the log without guessing. Progress
+    talk: session end only. Pattern and slot appear only for LOGGED handouts (RULE ZERO).
+    -> {"today", "session_id", "problems": [{handout_id, number, title, handed_at,
+        target_min, status, mode, attempt: {...} | None, reveal: {...} | None}],
+        "attempts_without_handout": [...], "skill_changes": [{name, level, evidence}],
+        "retry": {"added", "cleared", "bumped"}, "trap_recall": [...]}"""
+    day = _today(today)
+    start = datetime.combine(day, datetime.min.time())
+    end = start + timedelta(days=1)
+    with session_scope() as s:
+        sess = _latest_session(s, user_id, day)
+        handouts = list(s.scalars(select(Handout).where(
+            Handout.user_id == user_id, Handout.slot != "imported",
+            Handout.handed_at >= start, Handout.handed_at < end).order_by(Handout.id)))
+        atts = list(s.scalars(select(Attempt).where(
+            Attempt.user_id == user_id, Attempt.day == day).order_by(Attempt.id)))
+        by_handout = {a.handout_id: a for a in atts if a.handout_id is not None}
+        problems = []
+        for h in handouts:
+            p = s.get(Problem, h.problem_number)
+            a = by_handout.get(h.id)
+            rv = None
+            if h.status == "logged":
+                slug = h.pattern_slug or p.pattern_slug
+                rv = {"slot": h.slot, "pattern": slug,
+                      "pattern_name": pattern_name(slug) if slug else None,
+                      "tier": pattern_tier(slug) if slug else None}
+            problems.append({
+                "handout_id": h.id, "number": p.number, "title": p.title,
+                "handed_at": h.handed_at.isoformat(), "target_min": h.target_min,
+                "status": h.status, "mode": picker.mode_for(h.slot),
+                "attempt": _attempt_row(a) if a else None, "reveal": rv})
+        linked = {h.id for h in handouts}
+        loose = [_attempt_row(a) for a in atts if a.handout_id not in linked]
+        events = s.execute(
+            select(SkillEvent, Skill).join(Skill, SkillEvent.skill_id == Skill.id)
+            .where(Skill.user_id == user_id, SkillEvent.day == day)
+            .order_by(SkillEvent.id)).all()
+        skill_changes = [{"name": k.name, "level": e.level, "evidence": e.evidence}
+                         for e, k in events]
+        retry = {"added": [], "cleared": [], "bumped": []}
+        for r in state.user_retry_items(s, user_id, open_only=False):
+            p = s.get(Problem, r.problem_number)
+            row = {"problem_number": r.problem_number, "title": p.title if p else "",
+                   "attempts": r.attempts, "reason": r.reason}
+            if r.cleared_on == day:
+                retry["cleared"].append(row)
+            elif r.added == day:
+                retry["added"].append(row)
+            elif r.last_on == day:
+                retry["bumped"].append(row)
+        traps = [_trap_row(r) for r in s.scalars(select(TrapRecall).where(
+            TrapRecall.user_id == user_id, TrapRecall.day == day).order_by(TrapRecall.id))]
+        return {"today": day.isoformat(), "session_id": sess.id if sess else None,
+                "problems": problems, "attempts_without_handout": loose,
+                "skill_changes": skill_changes, "retry": retry, "trap_recall": traps}
