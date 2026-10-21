@@ -346,3 +346,16 @@ class TestRun(Base):
     code: Mapped[str] = mapped_column(Text, default="")
     results: Mapped[object] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class Submission(Base):
+    """What he submitted (the code of a `submission` event) and how the coach judged it.
+    verdict: Accepted | Wrong Answer | Time Limit Exceeded | Runtime Error | None (not judged)."""
+    __tablename__ = "submissions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    handout_id: Mapped[int] = mapped_column(ForeignKey("handouts.id"), index=True)
+    code: Mapped[str] = mapped_column(Text, default="")
+    verdict: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    judged: Mapped[object] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)

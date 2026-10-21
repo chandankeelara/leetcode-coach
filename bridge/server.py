@@ -440,7 +440,7 @@ def _on_open(fn):
 
 @mcp.tool()
 def read_code() -> dict:
-    """His editor text as autosaved (code, cursor_line, updated_at) and his last submission {code, verdict, at} or null."""
+    """His editor text as autosaved (code, cursor_line, updated_at) and his last submission {code, verdict, at} or null (verdict is only set for LeetCode-extension submissions; use `judge`)."""
     return _on_open(lambda hid: svc().read_code(uid(), hid))
 
 
@@ -539,6 +539,18 @@ def run_tests(cases: list | None = None) -> dict:
     except ValueError as e:
         return {"error": str(e)}
     return _jsonable({k: r[k] for k in ("passed", "failed", "ran", "total", "results")})
+
+
+@mcp.tool()
+def judge(extra_cases: list | None = None) -> dict:
+    """Grade his latest SUBMISSION the way LeetCode would. Runs the submitted code on the panel's cases plus `extra_cases` (yours, hidden: same format as set_tests cases, with `expected`; he never sees them). Case values may use {"$repeat": [value, n]} and {"$range": [a, b]} so a near-max case is a few characters. Returns {verdict: "Accepted"|"Wrong Answer"|"Time Limit Exceeded"|"Runtime Error", first_failure: {input, got, expected, error, size, hidden} | null, passed, total, slowest_ms}. A timeout (3 s for the whole run) is Time Limit Exceeded. The verdict is stored: every non-Accepted one counts as a bug."""
+    hid = _open_handout()
+    if hid is None:
+        return {"error": "no open problem"}
+    try:
+        return _jsonable(svc().judge(uid(), hid, extra_cases))
+    except ValueError as e:
+        return {"error": str(e)}
 
 
 def main():

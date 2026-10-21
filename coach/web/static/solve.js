@@ -365,7 +365,7 @@
   });
 
   /* ---------- submit ---------- */
-  var lintOut = $("lint-out"), submitBtn = $("submit"), seg = $("verdict"), logLink = $("log-link");
+  var lintOut = $("lint-out"), submitBtn = $("submit"), judging = $("judging"), logLink = $("log-link");
   var marked = [];
   function clearMarks() {
     if (!cm) return;
@@ -388,7 +388,7 @@
     var ln = parseInt(b.dataset.line, 10) - 1;
     if (cm) { cm.focus(); cm.setCursor({ line: Math.max(0, ln), ch: 0 }); cm.scrollIntoView(null, 120); }
   });
-  seg.addEventListener("change", function () { seg.classList.remove("invalid"); });
+  function setJudging(on) { if (judging) judging.hidden = !on; }
   function submitted() {
     root.classList.add("has-submission");
     submitBtn.classList.remove("btn-primary");
@@ -398,23 +398,17 @@
     if (stage() !== "code") { toast("Code opens when your coach says the idea holds.", "warn"); setTab("think", true); return; }
     var code = getCode();
     if (!code.trim()) { toast("Nothing to submit yet.", "warn"); return; }
-    var v = seg.querySelector("input:checked");
-    if (!v) {
-      seg.classList.add("invalid");
-      toast("Pick what LeetCode said: Accepted, Wrong answer, TLE or Runtime error.", "warn");
-      var f = seg.querySelector("input"); if (f) f.focus();
-      return;
-    }
     submitBtn.classList.add("busy");
-    post("/solve/submit", { code: code, verdict: v.value }).then(function (r) {
+    post("/solve/submit", { code: code }).then(function (r) {
       return r.text().then(function (t) { return { ok: r.ok, html: t }; });
     }).then(function (res) {
       submitBtn.classList.remove("busy");
-      if (!res.ok || res.html.indexOf('class="err"') !== -1) { toast("Not submitted. Need code and a result.", "error"); return; }
+      if (!res.ok || res.html.indexOf('class="err"') !== -1) { toast("Not submitted. Need code.", "error"); return; }
       clearMarks();
       lintOut.innerHTML = res.html;
       markLines();
       submitted();
+      setJudging(true);
       var n = lintOut.querySelectorAll("[data-line]").length;
       toast(n ? "Submitted. " + n + " lint finding" + (n === 1 ? "" : "s") + "." : "Submitted. Lint clean.", n ? "warn" : "ok");
       expectReply();
@@ -491,6 +485,7 @@
     empty.hidden = true;
     root.classList.add("has-msgs");
     markApproach();
+    if (gotCoach) setJudging(false);
     if (gotCoach && waitingSince !== null) stopTyping();
     if (stick || !gotCoach) toBottom(true);
     if (gotCoach && !wide.matches && root.dataset.tab !== "think") $("tab-unread").hidden = false;

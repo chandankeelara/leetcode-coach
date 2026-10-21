@@ -124,6 +124,15 @@
       if (!parts.length) el.detail.appendChild(kv("Input", "(none)"));
       parts.forEach(function (p) { el.detail.appendChild(kv(p[0] + " =", p[1])); });
     }
+    if (c.input_html) {
+      var dr = node("details", "tp-draw");
+      if (st === "fail" || st === "err" || st === "tle") dr.open = true;
+      dr.appendChild(node("summary", "tp-draw-sum", "Drawing"));
+      var body = node("div", "tp-draw-body");
+      body.innerHTML = c.input_html;      /* escaped server-side by coach.viz.render */
+      dr.appendChild(body);
+      el.detail.appendChild(dr);
+    }
     if (r && (r.error || r.got !== null || st === "ran" || st === "pass" || st === "fail")) {
       if (!(r.error && r.got === null)) el.detail.appendChild(kv("Output", fmt(r.got), "tp-out tp-" + st));
     }

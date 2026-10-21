@@ -110,3 +110,11 @@
   .tp-chev, .tp-chip { transition: none; }
   .tp-run.busy svg { animation: none; }
 }
+
+/* drawing of the input under the text lines; scrolls inside itself, never the panel */
+.tp-draw { min-width: 0; }
+.tp-draw-sum { cursor: pointer; font-size: 12px; color: var(--text-3); list-style: none; width: fit-content; }
+.tp-draw-sum::-webkit-details-marker { display: none; }
+.tp-draw[open] > .tp-draw-sum::after { content: " (hide)"; }
+.tp-draw:not([open]) > .tp-draw-sum::after { content: " (show)"; }
+.tp-draw-body { margin-top: 6px; max-width: 100%; overflow-x: auto; }

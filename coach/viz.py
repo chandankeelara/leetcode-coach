@@ -205,7 +205,7 @@ def _render_grid(spec):
 
 # ---- svg helpers ---------------------------------------------------------------------------
 _svg_ids = itertools.count(1)
-MIN_SCALE = 0.7          # below this the drawing stops shrinking and scrolls sideways instead
+MIN_SCALE = 0.62         # below this the drawing stops shrinking and scrolls sideways instead
 
 
 def _marker(mid, cls):
@@ -227,7 +227,7 @@ def _short(s, n):
 
 # ---- linked list ---------------------------------------------------------------------------
 LL_H = 34                # node box height
-LL_GAP = 30              # arrow run between boxes
+LL_GAP = 26              # arrow run between boxes
 LL_CH = 8.2              # value glyph advance (mono 13px, condensed)
 LL_PTR_CH = 6.7          # pointer-tag glyph advance (mono 11px)
 LL_LOOP = 44             # bezier control depth of the back-arrow below the row
@@ -251,7 +251,7 @@ def _render_list(spec):
         return _figure("list-fig", body, cap)
 
     texts = [_short(_txt(v, "value"), 8) for v in vals]
-    nw = max(44, max(len(t) for t in texts) * LL_CH + 18)
+    nw = max(40, max(len(t) for t in texts) * LL_CH + 18)
     pitch = nw + LL_GAP
     pad = 6
     ptr_h = 30 if ptr else 0
@@ -259,8 +259,8 @@ def _render_list(spec):
     top = pad + ptr_h + idx_h
     mid_y = top + LL_H / 2
     bot = top + LL_H
-    x0 = pad + (max(0, max(len(", ".join(v)) for v in ptr.values()) * LL_PTR_CH + 12 - nw) / 2
-                if ptr else 0)
+    widest = max((len(", ".join(v)) for v in ptr.values()), default=0) * LL_PTR_CH + 12
+    x0 = pad + max(0, widest - nw) / 2
 
     def left(i):
         return x0 + i * pitch
@@ -338,10 +338,10 @@ def _render_list(spec):
 
 
 # ---- tree ----------------------------------------------------------------------------------
-NODE_R = 15
-GAP_X = 36
-GAP_Y = 54
-PAD = 20
+NODE_R = 16
+GAP_X = 38
+GAP_Y = 52
+PAD = 6
 
 
 def tree_layout(values):
@@ -400,20 +400,22 @@ def _render_tree(spec):
     for k, v, d, x, y, p in lay:
         if p is not None:
             px, py = pos[p]
-            edges.append(Markup('<line class="viz-tree-edge" x1="{}" y1="{}" x2="{}" y2="{}"/>')
-                         .format(px, py, x, y))
+            dx, dy = x - px, y - py
+            ln = (dx * dx + dy * dy) ** 0.5
+            ux, uy = dx / ln, dy / ln
+            edges.append(Markup('<line class="viz-tree-edge" x1="{:.1f}" y1="{:.1f}" '
+                                'x2="{:.1f}" y2="{:.1f}"/>').format(
+                px + ux * NODE_R, py + uy * NODE_R, x - ux * NODE_R, y - uy * NODE_R))
         s = _txt(v, "value")
         size = "viz-tree-sm" if len(s) > 3 else ""
         circles.append(Markup(
             '<g class="{g}"><circle class="viz-tree-node" cx="{x}" cy="{y}" r="{r}"/>'
-            '<text class="{t}" x="{x}" y="{ty}" text-anchor="middle">{s}</text>'
-            '<text class="viz-tree-idx" x="{x}" y="{iy}" text-anchor="middle">{k}</text></g>')
+            '<text class="{t}" x="{x}" y="{y}" text-anchor="middle" '
+            'dominant-baseline="central">{s}</text></g>')
             .format(g=_cls("viz-tree-g", "viz-hl" if k in hl else ""), x=x, y=y, r=NODE_R,
-                    t=_cls("viz-tree-val", size), ty=y + 4.5, s=s if len(s) <= 6 else s[:5] + "…",
-                    iy=y + NODE_R + 11, k=k))
-    svg = Markup('<svg class="viz-tree" width="{w}" height="{h}" viewBox="0 0 {w} {h}" '
-                 'role="img" aria-label="tree">{e}{c}</svg>').format(
-        w=w, h=h, e=Markup("").join(edges), c=Markup("").join(circles))
+                    t=_cls("viz-tree-val", size), s=_short(s, 6)))
+    label = "binary tree " + ", ".join(_fmt(v) for v in vals)
+    svg = _svg("viz-tree", w, h, label, Markup("").join(edges + circles))
     return _figure("tree-fig", Markup('<div class="viz-scroll">{}</div>').format(svg),
                    _caption(spec))
 

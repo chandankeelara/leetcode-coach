@@ -34,7 +34,7 @@
 .viz-label:empty { display: none; }
 
 /* array */
-.viz-array, .viz-list { display: flex; align-items: flex-start; width: max-content; }
+.viz-array { display: flex; align-items: flex-start; width: max-content; }
 .viz-col { display: flex; flex-direction: column; align-items: center; gap: 4px; }
 .viz-array .viz-col + .viz-col { margin-left: -1px; }
 .viz-array .viz-col:first-child .viz-cell { border-radius: var(--r-1) 0 0 var(--r-1); }
@@ -42,10 +42,39 @@
 .has-ptr .viz-ptr { height: 16px; display: flex; align-items: flex-end; }
 .has-ptr .viz-col-ptr .viz-ptr::after { content: "\25BE"; margin-left: 2px; font-size: 10px; }
 .viz-col:not(.viz-col-ptr) .viz-ptr:empty { visibility: hidden; }
-.viz-array:not(.has-ptr) .viz-ptr, .viz-list:not(.has-ptr) .viz-ptr { display: none; }
+.viz-array:not(.has-ptr) .viz-ptr { display: none; }
+
+/* drawn kinds (list, tree): one svg, shrinks to the pane down to 62% (data-minw), then scrolls */
+.viz-svg {
+  display: block; max-width: 100%; height: auto; overflow: visible;
+  min-width: attr(data-minw px, 0px);
+  --viz-loop: var(--hl);
+}
+:root[data-theme="light"] .viz-svg { --viz-loop: color-mix(in srgb, var(--hl) 45%, var(--hl-ink)); }
 
 /* linked list */
-.viz-list { align-items: flex-start; gap: 0; }
+.viz-ll-box { fill: var(--sunk); stroke: var(--line-2); stroke-width: 1.5; }
+.viz-ll-val {
+  fill: var(--text); font: 500 13px var(--f-num); font-stretch: 87.5%;
+  font-variant-numeric: tabular-nums;
+}
+.viz-ll-node.viz-null .viz-ll-val { fill: var(--text-3); }
+.viz-ll-node.viz-hl .viz-ll-box { fill: var(--hl); stroke: var(--hl-strong); }
+.viz-ll-node.viz-hl .viz-ll-val { fill: var(--on-hl); font-weight: 600; }
+.viz-ll-next { fill: none; stroke: var(--text-3); stroke-width: 1.5; }
+.viz-ll-head { fill: var(--text-3); }
+.viz-ll-null { fill: var(--text-3); font: 500 12px var(--f-code); }
+.viz-ll-idx { fill: var(--text-3); font: 400 10.5px var(--f-num); font-stretch: 87.5%; }
+.viz-ll-loop { fill: none; stroke: var(--viz-loop); stroke-width: 2; stroke-linecap: round; }
+.viz-ll-loop-head { fill: var(--viz-loop); }
+.viz-ll-tag { fill: var(--hl-wash); stroke: var(--hl-line); stroke-width: 1; }
+.viz-ll-ptr-name { fill: var(--hl-ink); font: 600 11px var(--f-code); }
+.viz-ll-ptr-line { fill: none; stroke: var(--hl-ink); stroke-width: 1.5; }
+.viz-ll-ptr-head { fill: var(--hl-ink); }
+
+/* list visuals stored before the svg drawing (old chat messages) */
+.viz-list { display: flex; align-items: flex-start; width: max-content; }
+.viz-list:not(.has-ptr) .viz-ptr { display: none; }
 .viz-node { border-radius: var(--r-2); min-width: 38px; }
 .viz-arrow {
   flex: none; display: inline-flex; align-items: center; height: 34px; padding: 0 6px;
@@ -53,7 +82,7 @@
 }
 .has-ptr > .viz-arrow, .has-ptr > .viz-end { margin-top: 20px; }
 .viz-list > .viz-end { display: inline-flex; align-items: center; height: 34px; }
-.viz-back { color: var(--hl-ink); gap: 3px; font-size: 17px; }
+.viz-back:not(path) { color: var(--hl-ink); gap: 3px; font-size: 17px; }
 .viz-back-to { font: 500 11px/1 var(--f-num); }
 .viz-cycle-target { outline: 1.5px dashed var(--hl-line); outline-offset: 2px; }
 
@@ -72,12 +101,12 @@
   font: 500 8.5px/1 var(--f-num); color: var(--hl-ink);
 }
 
-/* tree (svg) */
-.viz-tree { display: block; max-width: none; overflow: visible; }
-.viz-tree-edge { stroke: var(--line-2); stroke-width: 1.5; }
+/* tree */
+.viz-tree-edge { stroke: var(--text-3); stroke-width: 1.5; }
 .viz-tree-node { fill: var(--sunk); stroke: var(--line-2); stroke-width: 1.5; }
 .viz-tree-val {
   fill: var(--text); font: 500 12.5px var(--f-num); font-stretch: 87.5%;
+  font-variant-numeric: tabular-nums;
 }
 .viz-tree-val.viz-tree-sm { font-size: 9.5px; }
 .viz-tree-idx { fill: var(--text-3); font: 400 8.5px var(--f-num); }

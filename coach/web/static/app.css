@@ -287,11 +287,6 @@ kbd + kbd { margin-left: 3px; }
 .seg input:checked + label { background: var(--raised-2); color: var(--text); box-shadow: 0 1px 0 rgba(0,0,0,.25), inset 0 0 0 1px var(--line-2); }
 .seg input:focus-visible + label { outline: 2px solid var(--focus); outline-offset: 1px; }
 .seg .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--line-2); transition: background var(--d-fast); }
-.seg input:checked + .v-ok .dot { background: var(--ok); }
-.seg input:checked + .v-wa .dot { background: var(--danger); }
-.seg input:checked + .v-tle .dot { background: var(--warn); }
-.seg input:checked + .v-re .dot { background: var(--danger); }
-.seg.invalid { border-color: var(--danger); box-shadow: 0 0 0 3px var(--danger-wash); }
 
 .switch { position: relative; display: inline-block; width: 44px; height: 26px; flex: none; cursor: pointer; }
 .switch input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
@@ -720,8 +715,11 @@ body.app-solve .toasts { right: auto; left: var(--s4); bottom: var(--s4); }
   padding: var(--s3) var(--s4); border-top: 1px solid var(--line); background: var(--pane);
 }
 .ed-actions { display: flex; gap: var(--s2); margin-left: auto; }
-.verdict-wrap { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-width: 0; }
-.verdict-lbl { font-size: 13px; color: var(--text-3); white-space: nowrap; }
+.judging { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-3); }
+.judging[hidden] { display: none; }
+.judging .spin { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--line-2); border-top-color: var(--accent, var(--text-3)); animation: judge-spin .8s linear infinite; }
+@keyframes judge-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .judging .spin { animation: none; } }
 
 /* ---------- solve: tablet and phone ---------- */
 @media (max-width: 1099.98px) {
@@ -793,9 +791,6 @@ body.app-solve .toasts { right: auto; left: var(--s4); bottom: var(--s4); }
   .lang { height: 26px; padding: 0 8px; font-size: 12.5px; }
   .lang em { font-size: 9.5px; padding: 1px 4px; }
   .ed-foot { padding: var(--s3); }
-  .verdict-wrap { width: 100%; }
-  .seg.verdicts { width: 100%; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .seg.verdicts label { justify-content: center; }
   .ed-actions { width: 100%; }
   .ed-actions .btn { flex: 1; }
   .toasts { left: 16px; right: 16px; width: auto; bottom: 16px; }

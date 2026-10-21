@@ -21,7 +21,7 @@ from sqlalchemy import delete, select
 
 from . import runner
 from .db import session_scope
-from .models import Handout, Problem, TestCase, TestRun, TestSpec
+from .models import Handout, Problem, Submission, TestCase, TestRun, TestSpec
 
 TESTS_UI_KINDS = frozenset({"tests"})
 TEXT_FIELDS = ("label", "note")
@@ -146,6 +146,51 @@ def _run_row(r):
             **runner.summary(r.results or [])}
 
 
+def _case_out(r):
+    c = {"id": r.id, "source": r.source, **(r.case or {})}
+    html = input_html(c) if (r.case or {}) else ""
+    if html:
+        c["input_html"] = html
+    return c
+
+
+def _draw(kind, spec):
+    from . import viz
+    try:
+        return str(viz.render(kind, spec))
+    except (ValueError, TypeError, KeyError):
+        return ""
+
+
+def input_html(case):
+    """Drawings of the structures in a function-mode case's input, via viz.render (escaped
+    there): ListNode arg -> list (cycle_to from an int `pos` arg, -1 -> none), TreeNode arg ->
+    tree, list of lists -> grid, flat list of 2+ -> array. Scalars and short arrays: nothing.
+    Returns "" when there is nothing to draw."""
+    args = case.get("args")
+    if not isinstance(args, dict):
+        return ""
+    types = case.get("types") if isinstance(case.get("types"), dict) else {}
+    pos = args.get("pos")
+    parts = []
+    for name, v in args.items():
+        if not isinstance(v, list):
+            continue
+        kind_t = types.get(name)
+        if kind_t == "ListNode":
+            spec = {"values": v}
+            if isinstance(pos, int) and not isinstance(pos, bool) and pos >= 0:
+                spec["cycle_to"] = pos
+            parts.append(_draw("list", spec))
+        elif kind_t == "TreeNode":
+            parts.append(_draw("tree", {"values": v}))
+        elif v and all(isinstance(r, list) for r in v):
+            parts.append(_draw("grid", {"rows": v}))
+        elif len(v) >= 2 and not any(isinstance(x, (list, dict)) for x in v):
+            parts.append(_draw("array", {"values": v}))
+    return "".join(p for p in parts if p)
+
+
 def tests(user_id, handout_id):
     """{handout_id, mode, entry, cases: [{id, source, ...case}], last_run: {id, who, at,
     results, passed, failed, ran, total} | None}. last_run = his latest run."""
@@ -158,7 +203,7 @@ def tests(user_id, handout_id):
             .order_by(TestRun.id.desc()).limit(1)).first()
         return {"handout_id": h.id, "mode": sp.mode if sp else None,
                 "entry": (sp.entry if sp else None) or {},
-                "cases": [{"id": r.id, "source": r.source, **(r.case or {})} for r in rows],
+                "cases": [_case_out(r) for r in rows],
                 "last_run": _run_row(last) if last else None}
 
 
@@ -245,5 +290,112 @@ def run_tests(user_id, handout_id, code, who="user", cases=None, timeout_s=None)
     return {"run_id": run_id, "results": results, **summ}
 
 
+# ---- judge: the coach grades what he submitted ------------------------------------------------
+JUDGE_CASE_MAX = 3_000_000   # json chars per hidden case (a large case near the constraints)
+JUDGE_EXTRA_MAX = 30
+JUDGE_TIMEOUT_S = 3          # one wall timeout for the whole run; the runner has no per-case clock
+VERDICTS = ("Accepted", "Wrong Answer", "Time Limit Exceeded", "Runtime Error")
+
+
+def _expand(v):
+    """{"$repeat": [value, n]} -> [value] * n; {"$range": [a, b(, step)]} -> list(range(...)).
+    Lets the coach write a 100000-element case in a few characters. Recursive."""
+    if isinstance(v, dict) and len(v) == 1:
+        (k, a), = v.items()
+        if k == "$repeat" and isinstance(a, list) and len(a) == 2 and isinstance(a[1], int):
+            if not 0 <= a[1] <= 2_000_000:
+                raise ValueError("$repeat: n must be 0..2000000")
+            return [_expand(a[0])] * a[1]
+        if k == "$range" and isinstance(a, list) and 2 <= len(a) <= 3                 and all(isinstance(x, int) for x in a):
+            r = range(*a)
+            if len(r) > 2_000_000:
+                raise ValueError("$range: 2000000 items max")
+            return list(r)
+    if isinstance(v, dict):
+        return {k: _expand(x) for k, x in v.items()}
+    if isinstance(v, list):
+        return [_expand(x) for x in v]
+    return v
+
+
+def _size(case):
+    n = 0
+    for part in (case.get("args"), case.get("ops")):
+        vals = part.values() if isinstance(part, dict) else (part or [])
+        for x in vals:
+            if isinstance(x, list):
+                n = max(n, len(x))
+    return n
+
+
+def judge(user_id, handout_id, extra_cases=None):
+    """Run his latest SUBMITTED code on the panel's cases (coach + his) plus `extra_cases`
+    (hidden: same format as set_tests cases, with `expected`; never stored as cases, never
+    shown to him). Case values may use {"$repeat": [v, n]} and {"$range": [a, b]}.
+    Returns {verdict, first_failure: {input, got, expected, error, size, hidden} | None, passed,
+    total, slowest_ms, submission_id}. Verdict is the first failing case in order: a timeout is
+    Time Limit Exceeded, an exception or crash Runtime Error, a wrong value Wrong Answer. The
+    verdict is stored on the submission so session_summary can count it. ValueError when there
+    is no submission, no spec or no cases."""
+    extra = []
+    if extra_cases is not None:
+        if not isinstance(extra_cases, list) or len(extra_cases) > JUDGE_EXTRA_MAX:
+            raise ValueError(f"extra_cases: a list of at most {JUDGE_EXTRA_MAX}")
+        for i, c in enumerate(extra_cases):
+            if not isinstance(c, dict):
+                raise ValueError(f"extra case {i} must be an object")
+            c = _expand(json.loads(json.dumps(c)))
+            c.pop("id", None)
+            c.pop("source", None)
+            if len(json.dumps(c)) > JUDGE_CASE_MAX:
+                raise ValueError(f"extra case {i}: too large")
+            extra.append(c)
+    with session_scope() as s:
+        h = _handout(s, user_id, handout_id)
+        sub = s.scalars(select(Submission).where(Submission.handout_id == h.id)
+                        .order_by(Submission.id.desc()).limit(1)).first()
+        if sub is None:
+            raise ValueError("no submission yet")
+        sp = _spec(s, h.id)
+        if sp is None:
+            raise ValueError("no tests set for this problem")
+        mode, entry = sp.mode, sp.entry or {}
+        sub_id, code = sub.id, sub.code
+        panel = [dict(r.case or {}) for r in _ordered(_case_rows(s, user_id, h.id))]
+    cases = [dict(c, _hidden=False) for c in panel] + [dict(c, _hidden=True) for c in extra]
+    if not cases:
+        raise ValueError("no test cases")
+    hidden = [c.pop("_hidden") for c in cases]
+    runner.check(mode, entry, cases)
+    results = runner.run(code, cases, mode, entry, timeout_s=JUDGE_TIMEOUT_S)
+    verdict, first = "Accepted", None
+    for i, (c, r) in enumerate(zip(cases, results)):
+        if r["ok"] is not False:
+            continue
+        if r["error"] == runner.TIMEOUT:
+            verdict = "Time Limit Exceeded"
+        elif r["error"]:
+            verdict = "Runtime Error"
+        else:
+            verdict = "Wrong Answer"
+        inp = {k: c[k] for k in ("args", "ops") if k in c}
+        first = {"input": _short(inp), "got": _short(r["got"]),
+                 "expected": _short(r["expected"]) if "expected" in c else None,
+                 "error": _short(r["error"]) if r["error"] else None,
+                 "size": _size(c), "hidden": hidden[i]}
+        break
+    passed = sum(1 for r in results if r["ok"] is not False and not r["error"])
+    ms = [r["ms"] for r in results if r.get("ms") is not None]
+    out = {"verdict": verdict, "first_failure": first, "passed": passed,
+           "total": len(results), "slowest_ms": max(ms) if ms else None,
+           "submission_id": sub_id}
+    with session_scope() as s:
+        row = s.get(Submission, sub_id)
+        row.verdict, row.judged = verdict, out
+        s.add(TestRun(user_id=user_id, handout_id=handout_id, who="coach", code=code,
+                      results=results, created_at=datetime.now()))
+    return out
+
+
 __all__ = ["set_tests", "add_user_test", "delete_user_test", "tests", "last_run", "run_tests",
-           "results_summary", "TESTS_UI_KINDS"]
+           "judge", "results_summary", "TESTS_UI_KINDS"]

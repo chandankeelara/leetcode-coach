@@ -23,7 +23,6 @@ FLASH = "coach_flash"
 FLASHES = {"log_first": "Log the current problem first."}
 MAX_AGE = 30 * 24 * 3600
 REPORT_DATE = "2026-12-15"
-VERDICTS = ["accepted", "wrong answer", "TLE", "runtime error"]
 
 
 def load_secret():
@@ -307,7 +306,7 @@ async def solve(request: Request):
     msgs = [m for m in msgs if this_handout(m, h)]
     c = clock_of(sess["uid"], h)
     return render(request, "solve.html", sess, h=h, elapsed=c["elapsed_s"], clock=c,
-                  started=h.started_at.strftime("%H:%M"), verdicts=VERDICTS, msgs=msgs,
+                  started=h.started_at.strftime("%H:%M"), msgs=msgs,
                   last=last, editor_open=_editor_open(sess["uid"], h))
 
 
@@ -342,12 +341,11 @@ async def submit(request: Request):
     sess, form = await authed_form(request)
     h = service().current_handout(sess["uid"])
     code = form.get("code") or ""
-    verdict = form.get("verdict") or ""
-    if not h or not code.strip() or verdict not in VERDICTS:
-        return frag("Need code and a result.", False)
+    if not h or not code.strip():
+        return frag("Nothing to submit.", False)
     found = [{"line": l, "kind": k, "msg": m} for l, k, m in service().lint(code)]
     service().push_event(sess["uid"], "submission", {
-        "handout_id": h.handout_id, "code": code, "lint": found, "verdict": verdict})
+        "handout_id": h.handout_id, "code": code, "lint": found, "judged_by": "coach"})
     return templates.TemplateResponse(request, "_lint.html", {"found": found})
 
 

@@ -130,17 +130,7 @@
       {% include "_tests.html" %}
       <div class="lint-out" id="lint-out" aria-live="polite"></div>
       <footer class="ed-foot">
-        <div class="verdict-wrap">
-        <span class="verdict-lbl" id="verdict-lbl">LeetCode said</span>
-        <fieldset class="seg verdicts" id="verdict" aria-labelledby="verdict-lbl">
-          {% set vcls = {"accepted": "v-ok", "wrong answer": "v-wa", "TLE": "v-tle", "runtime error": "v-re"} %}
-          {% set vlbl = {"accepted": "Accepted", "wrong answer": "Wrong answer", "TLE": "TLE", "runtime error": "Runtime error"} %}
-          {% for v in verdicts %}
-          <input type="radio" name="verdict" id="v{{ loop.index }}" value="{{ v }}">
-          <label for="v{{ loop.index }}" class="{{ vcls.get(v, '') }}"{% if v == "TLE" %} title="Time limit exceeded"{% endif %}><span class="dot"></span>{{ vlbl.get(v, v) }}</label>
-          {% endfor %}
-        </fieldset>
-        </div>
+        <span class="judging" id="judging" role="status" aria-live="polite" hidden><span class="spin" aria-hidden="true"></span>Judging…</span>
         <div class="ed-actions">
           <button class="btn btn-primary" type="button" id="submit">Submit <span class="kbd-hint"><kbd>Ctrl</kbd><kbd>Enter</kbd></span></button>
           <a class="btn" href="/log" id="log-link">Log attempt</a>

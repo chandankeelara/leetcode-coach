@@ -20,8 +20,8 @@ from .catalog import default_target, pattern_name, pattern_tier
 from .db import session_scope
 from .models import (Attempt, Burned, ClockEvent, CoachMessage, Config, CoachSession, Event,
                      Handout, Pattern,
-                     PatternState, Problem, RetryItem, Skill, SkillEvent, TrapRecall, UiEvent,
-                     User, Visual)
+                     PatternState, Problem, RetryItem, Skill, SkillEvent, Submission, TrapRecall,
+                     UiEvent, User, Visual)
 
 _hasher = PasswordHasher()
 
@@ -741,6 +741,10 @@ def push_event(user_id, kind, payload=None):
     with session_scope() as s:
         e = Event(user_id=user_id, kind=kind, payload=payload or {})
         s.add(e)
+        p = payload or {}
+        if (kind == "submission" and p.get("code") and p.get("handout_id") is not None
+                and getattr(s.get(Handout, p["handout_id"]), "user_id", None) == user_id):
+            s.add(Submission(user_id=user_id, handout_id=p["handout_id"], code=p["code"]))
         s.flush()
         return e.id
 
@@ -985,6 +989,7 @@ def session_summary(user_id, today=None):
     talk: session end only. Pattern and slot appear only for LOGGED handouts (RULE ZERO).
     -> {"today", "session_id", "problems": [{handout_id, number, title, handed_at,
         target_min, status, mode, attempt: {...} | None, reveal: {...} | None,
+        submissions: {total, not_accepted (judged wrong: count each as a bug), verdicts},
         clock: {coach_min, wall_min, pauses: [{reason, minutes, at}], resets: [{reason, at}]}}],
         "attempts_without_handout": [...], "skill_changes": [{name, level, evidence}],
         "retry": {"added", "cleared", "bumped"}, "trap_recall": [...]}"""
@@ -1009,7 +1014,13 @@ def session_summary(user_id, today=None):
                 rv = {"slot": h.slot, "pattern": slug,
                       "pattern_name": pattern_name(slug) if slug else None,
                       "tier": pattern_tier(slug) if slug else None}
+            subs = list(s.scalars(select(Submission).where(Submission.handout_id == h.id)
+                                  .order_by(Submission.id)))
             problems.append({
+                "submissions": {"total": len(subs),
+                                "not_accepted": sum(1 for x in subs if x.verdict
+                                                    and x.verdict != "Accepted"),
+                                "verdicts": [x.verdict for x in subs]},
                 "handout_id": h.id, "number": p.number, "title": p.title,
                 "handed_at": h.handed_at.isoformat(), "target_min": h.target_min,
                 "status": h.status, "mode": picker.mode_for(h.slot),
@@ -1051,7 +1062,7 @@ UI_KINDS = UI_KINDS | EDITOR_UI_KINDS       # emit() reads the module global at 
 
 
 # ---- tests panel: cases, his own cases, runs (coach/tests_api.py, coach/runner.py) --------
-from .tests_api import (TESTS_UI_KINDS, add_user_test, delete_user_test,  # noqa: E402
+from .tests_api import (TESTS_UI_KINDS, add_user_test, delete_user_test, judge,  # noqa: E402
                         last_run, run_tests, set_tests, tests)
 
 UI_KINDS = UI_KINDS | TESTS_UI_KINDS        # emit() reads the module global at call time

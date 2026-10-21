@@ -41,9 +41,68 @@ def test_array_marks_highlight_pointers_labels():
     assert "&lt;b&gt;x&lt;/b&gt;" in out
 
 
-def test_list_cycle_and_grid_path():
-    out = viz.render("list", SPECS["list"])
-    assert "viz-cycle-target" in out and "viz-back" in out
+def _loop_path(out):
+    m = re.search(r'<path class="viz-back viz-ll-loop" d="([^"]+)" marker-end="url\(#([\w-]+)\)"',
+                  out)
+    assert m, out
+    assert f'<marker id="{m.group(2)}"' in out
+    return m.group(1)
+
+
+def test_list_cycle_is_a_drawn_back_arrow():
+    out = viz.render("list", {"values": [3, 2, 0, -4], "cycle_to": 1})
+    assert out.count("<svg") == 1 and "↩" not in out and "&#8617;" not in out
+    d = _loop_path(out)
+    assert d.startswith("M") and " C" in d                       # one cubic: a U under the row
+    assert out.count('class="viz-ll-node') == 4 and out.count('class="viz-ll-next"') == 3
+    assert "viz-cycle-target" not in out and ">null<" not in out
+    assert [int(x) for x in re.findall(r'class="viz-ll-idx"[^>]*>(\d+)<', out)] == [0, 1, 2, 3]
+    ys = [float(y) for y in re.findall(r'class="viz-ll-box" x="[^"]+" y="([^"]+)"', out)]
+    iy = float(re.search(r'class="viz-ll-idx" x="[^"]+" y="([^"]+)"', out).group(1))
+    assert iy < ys[0]                                           # indices above, arrow below
+    start_y = float(d.split()[0].split(",")[1])
+    assert start_y > ys[0] + 30
+
+
+def test_list_no_cycle_ends_in_null_without_indices():
+    out = viz.render("list", {"values": [1, 2, 3]})
+    assert out.count('class="viz-ll-next"') == 3 and out.rstrip().count(">null</text>") == 1
+    assert "viz-ll-idx" not in out and "viz-back" not in out
+    nx = float(re.search(r'class="viz-ll-null" x="([^"]+)"', out).group(1))
+    vx = max(float(x) for x in re.findall(r'class="viz-ll-val" x="([^"]+)"', out))
+    assert nx > vx                                              # null is last, on the right
+    assert "null" in viz.render("list", {"values": []})
+
+
+def test_list_self_loop():
+    out = viz.render("list", {"values": [7], "cycle_to": 0})
+    d = _loop_path(out)
+    xs = [float(p.split(",")[0].lstrip("MC")) for p in d.split() if "," in p]
+    assert xs[0] != xs[-1]                                      # leaves and re-enters the node
+    with pytest.raises(ValueError):
+        viz.render("list", {"values": [7], "cycle_to": 1})
+
+
+def test_list_caption_dropped_only_when_it_repeats_pos():
+    for cap in ("pos = 1", "pos=-1", "POS = 0"):
+        assert "viz-cap" not in viz.render("list", {"values": [1], "caption": cap})
+    out = viz.render("list", {"values": [1, 2], "caption": "where do they meet?"})
+    assert '<figcaption class="viz-cap">where do they meet?</figcaption>' in out
+
+
+def test_list_highlight_and_pointers():
+    out = viz.render("list", {"values": [1, 2, 3, 4], "highlight": [1, 2],
+                              "pointers": {"slow": 1, "fast": 3}, "cycle_to": 0})
+    assert out.count('class="viz-ll-node viz-hl"') == 2
+    assert ">slow<" in out and ">fast<" in out
+    assert out.count('class="viz-ll-ptr-line"') == 2
+    ids = re.findall(r'<marker id="([\w-]+)"', out)
+    assert len(ids) == len(set(ids)) == 3
+    again = re.findall(r'<marker id="([\w-]+)"', viz.render("list", {"values": [1]}))
+    assert not set(ids) & set(again)                             # unique per drawing
+
+
+def test_grid_path():
     g = viz.render("grid", SPECS["grid"])
     assert g.count("viz-path") == 2
 
@@ -52,6 +111,7 @@ def test_tree_layout_seven_nodes_has_seven_circles():
     out = viz.render("tree", {"values": [1, 2, 3, 4, 5, 6, 7]})
     assert out.count("<circle") == 7
     assert out.count("<line") == 6
+    assert out.count('dominant-baseline="central"') == 7 and "viz-tree-idx" not in out
     lay = viz.tree_layout([1, 2, 3, 4, 5, 6, 7])
     xs = {k: x for k, _, _, x, _, _ in lay}
     assert xs[3] < xs[1] < xs[4] < xs[0] < xs[5] < xs[2] < xs[6]     # in-order

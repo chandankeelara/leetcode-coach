@@ -404,3 +404,123 @@ def test_bridge_set_and_run_tests(bridge):
     assert probe["total"] == 1
     assert len(service.list_messages(uid)) == n_msgs        # coach runs post nothing
     assert service._drain(uid) == []
+
+
+# ---- judge (coach grades his submission) --------------------------------------------------------
+LOOP = "class StockSpanner:\n    def __init__(self):\n        while True:\n            pass\n\n    def next(self, price):\n        return 1\n"
+BOOM = "class StockSpanner:\n    def __init__(self):\n        pass\n\n    def next(self, price):\n        return 1 // 0\n"
+
+
+def _submit(uid, hid, code):
+    service.push_event(uid, "submission", {"handout_id": hid, "code": code, "judged_by": "coach"})
+
+
+def test_judge_verdicts(opened):
+    uid, hid = opened
+    service.set_tests(uid, hid, [SPAN_CASE], "design", {"class": "StockSpanner"})
+    with pytest.raises(ValueError):
+        service.judge(uid, hid)                                   # nothing submitted yet
+    _submit(uid, hid, SPANNER)
+    r = service.judge(uid, hid)
+    assert r["verdict"] == "Accepted" and r["first_failure"] is None
+    assert (r["passed"], r["total"]) == (1, 1) and r["slowest_ms"] is not None
+    _submit(uid, hid, SPANNER_BAD)
+    r = service.judge(uid, hid)
+    assert r["verdict"] == "Wrong Answer" and r["first_failure"]["got"] != r["first_failure"]["expected"]
+    assert r["first_failure"]["hidden"] is False
+    _submit(uid, hid, BOOM)
+    r = service.judge(uid, hid)
+    assert r["verdict"] == "Runtime Error" and "ZeroDivision" in r["first_failure"]["error"]
+    _submit(uid, hid, LOOP)
+    assert service.judge(uid, hid)["verdict"] == "Time Limit Exceeded"
+    with service.session_scope() as s:
+        from coach.models import Submission
+        verdicts = [x.verdict for x in s.query(Submission).order_by(Submission.id)]
+    assert verdicts == ["Accepted", "Wrong Answer", "Runtime Error", "Time Limit Exceeded"]
+
+
+def test_judge_hidden_cases_and_large_case(opened):
+    uid, hid = opened
+    service.set_tests(uid, hid, SUM_CASES, "function", SUM)
+    _submit(uid, hid, SUM_BAD)
+    hidden = {"args": {"nums": {"$repeat": [1, 5]}, "k": 2}, "expected": 4}
+    r = service.judge(uid, hid, [hidden])
+    assert r["verdict"] == "Wrong Answer" and r["total"] == 3
+    assert r["first_failure"]["hidden"] is False              # panel case 0 fails first
+    _submit(uid, hid, SUM_OK)
+    r = service.judge(uid, hid, [hidden])
+    assert r["verdict"] == "Accepted" and r["total"] == 3
+    r = service.judge(uid, hid, [{"args": {"nums": {"$repeat": [1, 5]}, "k": 2}, "expected": 99}])
+    assert r["verdict"] == "Wrong Answer" and r["first_failure"]["hidden"] is True
+    assert r["first_failure"]["size"] == 5
+    big = {"args": {"nums": {"$repeat": [0, 300000]}, "k": 0}, "expected": 0}
+    assert service.judge(uid, hid, [big])["verdict"] in ("Time Limit Exceeded", "Wrong Answer")
+    # hidden cases never reach the panel
+    cases = service.tests(uid, hid)["cases"]
+    assert len(cases) == 2 and all(c["source"] == "coach" for c in cases)
+    assert "99" not in json.dumps(service.tests(uid, hid))
+    assert service.tests(uid, hid)["last_run"] is None
+
+
+def test_judge_summary_counts_and_bridge(bridge):
+    server, uid, hid = bridge
+    service.set_tests(uid, hid, SUM_CASES, "function", SUM)
+    _submit(uid, hid, SUM_BAD)
+    r = server.judge(extra_cases=[])
+    assert r["verdict"] == "Wrong Answer"
+    _submit(uid, hid, SUM_OK)
+    assert server.judge()["verdict"] == "Accepted"
+    prob = [p for p in service.session_summary(uid)["problems"] if p["handout_id"] == hid][0]
+    assert prob["submissions"] == {"total": 2, "not_accepted": 1,
+                                   "verdicts": ["Wrong Answer", "Accepted"]}
+
+
+# ---- input drawings in GET /tests -----------------------------------------------------------------
+def test_case_input_drawings(opened):
+    uid, hid = opened
+    spec = {"class": "Solution", "method": "hasCycle"}
+    cases = [{"args": {"head": [3, 2, 0, -4], "pos": 1}, "types": {"head": "ListNode"}, "expected": True},
+             {"args": {"head": [1, 2], "pos": -1}, "types": {"head": "ListNode"}, "expected": False},
+             {"args": {"n": 5, "k": 2}, "expected": 1}]
+    service.set_tests(uid, hid, cases, "function", spec)
+    got = service.tests(uid, hid)["cases"]
+    assert "<svg" in got[0]["input_html"] and "list-fig" in got[0]["input_html"]
+    assert "input_html" in got[1]
+    assert "input_html" not in got[2]
+    from coach import tests_api, viz
+    calls = []
+    real = viz.render
+    viz.render = lambda k, s: (calls.append((k, s)), real(k, s))[1]
+    try:
+        tests_api.input_html(cases[0])
+        tests_api.input_html(cases[1])
+    finally:
+        viz.render = real
+    assert calls[0] == ("list", {"values": [3, 2, 0, -4], "cycle_to": 1})
+    assert calls[1] == ("list", {"values": [1, 2]})
+    assert tests_api.input_html({"args": {"root": [1, None, 2]}, "types": {"root": "TreeNode"}})
+    assert "grid" in tests_api.input_html({"args": {"g": [[1, 2], [3, 4]]}}).lower()
+    assert tests_api.input_html({"args": {"xs": [7]}}) == ""
+
+
+def test_pos_builds_the_cycle_and_is_not_passed():
+    """141: `pos` links the tail back to node pos; hasCycle(head) gets only head."""
+    from coach import runner
+    code = (
+        "class Solution:\n"
+        "    def hasCycle(self, head):\n"
+        "        seen = set()\n"
+        "        while head:\n"
+        "            if id(head) in seen:\n"
+        "                return True\n"
+        "            seen.add(id(head))\n"
+        "            head = head.next\n"
+        "        return False\n")
+    cases = [
+        {"args": {"head": [3, 2, 0, -4], "pos": 1}, "types": {"head": "ListNode"}, "expected": True},
+        {"args": {"head": [1, 2], "pos": 0}, "types": {"head": "ListNode"}, "expected": True},
+        {"args": {"head": [1], "pos": -1}, "types": {"head": "ListNode"}, "expected": False},
+        {"args": {"head": [], "pos": -1}, "types": {"head": "ListNode"}, "expected": False},
+    ]
+    res = runner.run(code, cases, "function", {"class": "Solution", "method": "hasCycle"})
+    assert [r["ok"] for r in res] == [True, True, True, True], res

@@ -103,8 +103,12 @@ def test_solve_page_clean_and_flow(env):
     h = {"X-CSRF-Token": t}
     c.post("/solve/approach", data={"approach": "scan once"}, headers=h)
     c.post("/solve/chat", data={"text": "hi"}, headers=h)
-    r = c.post("/solve/submit", data={"code": "bad", "verdict": "accepted"}, headers=h)
+    r = c.post("/solve/submit", data={"code": "bad"}, headers=h)
     assert "COST" in r.text
+    sub = [p for k, p in fake.events if k == "submission"][0]
+    assert "verdict" not in sub and sub["judged_by"] == "coach" and sub["code"] == "bad"
+    assert 'id="verdict"' not in html and "LeetCode said" not in html
+    assert 'id="judging"' in html
     c.post("/solve/stuck", headers=h)
     kinds = [k for k, _ in fake.events]
     assert kinds == ["handout", "approach", "chat", "submission", "stuck"]
@@ -273,8 +277,20 @@ def test_mdblock_viz_blocks():
     from coach.web.app import mdblock
     out = str(mdblock('Intro\n```viz\n{"kind":"list","values":[3,2],"cycle_to":1,"caption":"pos = 1"}\n```\n'
                       '```viz\n{"kind":"tree","values":[1,2,3]}\n```\n'))
-    assert "viz-list" in out and "viz-back" in out and "pos = 1" in out and "<pre>" not in out
+    assert "viz-list" in out and "viz-back" in out and "<pre>" not in out
+    assert "pos = 1" not in out                       # the Input line already says it
     assert out.count("<circle") == 3
+
+
+STATEMENT_141 = '## Examples\n\n### Example 1\n**Input:** `head = [3,2,0,-4], pos = 1`\n```viz\n{"kind": "list", "values": [3,2,0,-4], "cycle_to": 1, "caption": "pos = 1"}\n```\n**Output:** `true`\n**Explanation:** the last node (-4) links back to the node at index 1 (value 2).\n\n### Example 2\n**Input:** `head = [1,2], pos = 0`\n```viz\n{"kind": "list", "values": [1,2], "cycle_to": 0, "caption": "pos = 0"}\n```\n**Output:** `true`\n**Explanation:** the last node (2) links back to the first node.\n\n### Example 3\n**Input:** `head = [1], pos = -1`\n```viz\n{"kind": "list", "values": [1], "cycle_to": null, "caption": "pos = -1"}\n```\n**Output:** `false`\n**Explanation:** the single node\'s `next` is `null`, so no node repeats.'
+
+
+def test_statement_141_renders_three_drawings():
+    from coach.web.app import mdblock
+    out = str(mdblock(STATEMENT_141))
+    assert out.count("<svg") == 3 and "illustration unavailable" not in out
+    assert out.count('class="viz-back viz-ll-loop"') == 2 and out.count(">null</text>") == 1
+    assert "↩" not in out and "viz-cap" not in out
 
 
 def test_mdblock_viz_invalid_is_muted_and_escaped():

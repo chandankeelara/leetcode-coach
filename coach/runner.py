@@ -265,6 +265,20 @@ def run_function(ns, entry, i, case, cap):
     fn = getattr(obj, entry.get("method") or "", None)
     if fn is None:
         raise AttributeError("Solution has no method %%s" %% entry.get("method"))
+    # LeetCode convention (141, 142): `pos` only describes the test list. Link the tail of the
+    # ListNode argument to node `pos` (-1 = no cycle) and do not pass `pos`, unless the
+    # learner's method really takes a `pos` parameter.
+    if "pos" in args and "pos" not in fn.__code__.co_varnames[:fn.__code__.co_argcount]:
+        pos = args.pop("pos")
+        lists = [k for k, t in types.items() if t == "ListNode" and k in args]
+        if lists and isinstance(pos, int) and pos >= 0:
+            head = args[lists[0]]
+            nodes = []
+            while head is not None and len(nodes) <= 100000:
+                nodes.append(head)
+                head = head.next
+            if pos < len(nodes):
+                nodes[-1].next = nodes[pos]
     ret = fn(**args)
     inplace = case.get("inplace")
     if inplace:
