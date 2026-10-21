@@ -510,3 +510,37 @@ def caption(spec):
         return _caption(_dict(spec))
     except ValueError:
         return ""
+
+
+# ---- statement-embedded blocks: ```viz {json} ``` ------------------------------------------
+def parse_block(raw):
+    """JSON text of a ```viz block -> (kind, spec), validated by a trial render. ValueError."""
+    try:
+        data = json.loads(raw)
+    except (ValueError, RecursionError) as e:
+        raise ValueError(f"invalid JSON ({e})")
+    if not isinstance(data, dict):
+        raise ValueError("block must be a JSON object")
+    kind = check_kind(data.get("kind") if isinstance(data.get("kind"), str) else "")
+    spec = {k: v for k, v in data.items() if k != "kind"}
+    render(kind, spec)
+    return kind, spec
+
+
+_VIZ_FENCE = re.compile(r"^[ \t]*```[ \t]*viz[ \t]*\r?\n(.*?)^[ \t]*```[ \t]*$",
+                        re.S | re.M | re.I)
+
+
+def split_blocks(text):
+    """(text_without_viz_blocks, [raw_json, ...]) for a statement."""
+    raws = [m.group(1) for m in _VIZ_FENCE.finditer(text or "")]
+    return _VIZ_FENCE.sub("", text or ""), raws
+
+
+def block_html(raw):
+    """Rendered figure for one block, or a muted line if it does not parse. Never raw HTML."""
+    try:
+        kind, spec = parse_block(raw)
+        return render(kind, spec)
+    except (ValueError, TypeError, RecursionError):
+        return '<p class="viz-unavailable">illustration unavailable</p>'

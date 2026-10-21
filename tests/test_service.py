@@ -449,3 +449,50 @@ def test_editor_gate(world):
     assert service.lock_editor(world, h.handout_id) == {"ok": True}
     assert service.editor_open(world, h.handout_id) is False
     assert service.unlock_editor(world, 99999)["ok"] is False
+
+
+# ---- drawings embedded in a statement -----------------------------------------------------
+def _stmt141():
+    def fig(vals, cyc, pos):
+        return ('```viz\n{"kind": "list", "values": %s, "cycle_to": %s, "caption": "pos = %d"}\n```'
+                % (vals, cyc, pos))
+    return ("Given `head`, the head of a linked list, return `true` if the list has a cycle.\n\n"
+            "## Examples\n### Example 1\n**Input:** `head = [3,2,0,-4]`, `pos = 1`\n"
+            + fig("[3,2,0,-4]", 1, 1) + "\n**Output:** `true`\n\n### Example 2\n"
+            "**Input:** `head = [1,2]`, `pos = 0`\n" + fig("[1,2]", 0, 0) +
+            "\n**Output:** `true`\n\n### Example 3\n**Input:** `head = [1]`, `pos = -1`\n"
+            + fig("[1]", "null", -1) + "\n**Output:** `false`\n")
+
+
+def _handout_141(world):
+    with db.session_scope() as s:
+        s.add(Problem(number=141, title="Linked List Cycle", lc_slug="linked-list-cycle",
+                      difficulty="E", source="attempt"))
+    return _handout_for(world, 141)
+
+
+def test_statement_with_three_list_drawings_accepted(world):
+    hid = _handout_141(world)
+    text = _stmt141()
+    service.set_statement(world, hid, text)
+    assert service.get_statement(hid) == text.strip()
+
+
+@pytest.mark.parametrize("block,msg", [
+    ('{"kind": "list", "values": [1,', "bad viz block 1"),
+    ('{"kind": "pie", "values": [1]}', "bad viz block 1"),
+    ('{"kind": "list", "values": [1,2], "cycle_to": 9}', "bad viz block 1"),
+])
+def test_statement_rejects_bad_viz_block(world, block, msg):
+    hid = _handout_141(world)
+    with pytest.raises(ValueError, match=msg):
+        service.set_statement(world, hid, GOOD + "\n```viz\n" + block + "\n```\n")
+    assert service.get_statement(hid) is None
+
+
+def test_statement_viz_leak_caption_rejected(world):
+    hid = _handout_141(world)
+    blk = '```viz\n{"kind": "array", "values": [1,2], "caption": "two pointers"}\n```'
+    with pytest.raises(ValueError, match="leak"):
+        service.set_statement(world, hid, GOOD + "\n" + blk)
+    assert service.get_statement(hid) is None

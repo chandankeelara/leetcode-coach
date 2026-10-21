@@ -267,3 +267,31 @@ def test_web_handout_tells_the_coach(env):
     assert payload["handout_id"] == fake.h.handout_id and payload["source"] == "web"
     c.post("/solve", data={"csrf": t})  # a second press while one is open hands out nothing new
     assert [k for k, _ in fake.events].count("handout") == 1
+
+
+def test_mdblock_viz_blocks():
+    from coach.web.app import mdblock
+    out = str(mdblock('Intro\n```viz\n{"kind":"list","values":[3,2],"cycle_to":1,"caption":"pos = 1"}\n```\n'
+                      '```viz\n{"kind":"tree","values":[1,2,3]}\n```\n'))
+    assert "viz-list" in out and "viz-back" in out and "pos = 1" in out and "<pre>" not in out
+    assert out.count("<circle") == 3
+
+
+def test_mdblock_viz_invalid_is_muted_and_escaped():
+    from coach.web.app import mdblock
+    for blk in ('{"kind":"list","values":[', '{"kind":"nope"}', '[1]'):
+        out = str(mdblock("```viz\n" + blk + "\n```"))
+        assert "illustration unavailable" in out and "nope" not in out and "<pre>" not in out
+    out = str(mdblock('```viz\n{"kind":"array","values":["<script>alert(1)</script>"]}\n```'))
+    assert "<script" not in out and "&lt;script&gt;" in out
+
+
+def test_statement_endpoint_renders_drawings(env):
+    c, fake = env
+    login(c)
+    start(c)
+    fake.h.paraphrase = ('Intro.\n**Input:** `head = [1,2]`, `pos = 0`\n'
+                         '```viz\n{"kind":"list","values":[1,2],"cycle_to":0}\n```\n')
+    j = c.get("/statement").json()
+    assert "viz-list" in j["html"] and "viz-back" in j["html"]
+    assert "viz-list" in c.get("/solve").text

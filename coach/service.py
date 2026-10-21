@@ -420,7 +420,16 @@ def set_statement(user_id, handout_id, text):
         if h is None or h.user_id != user_id:
             raise ValueError(f"no handout {handout_id}")
         p = s.get(Problem, h.problem_number)
-        bad = leak_words(text, p.title, s)
+        from . import viz
+        prose, raws = viz.split_blocks(text)
+        spec_texts = []
+        for n, raw in enumerate(raws, 1):
+            try:
+                kind, spec = viz.parse_block(raw)
+            except ValueError as e:
+                raise ValueError(f"bad viz block {n}: {e}")
+            spec_texts += viz.texts(kind, spec)
+        bad = leak_words(" . ".join([prose] + spec_texts), p.title, s)
         if bad:
             raise ValueError("leak: " + ", ".join(bad))
         p.paraphrase = text

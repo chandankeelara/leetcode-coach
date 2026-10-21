@@ -382,6 +382,10 @@ kbd + kbd { margin-left: 3px; }
   background: var(--sunk); border: 1px solid var(--line); border-radius: var(--r-2);
 }
 .md pre code { padding: 0; border: 0; background: none; font-size: inherit; }
+/* drawings embedded in a statement (```viz blocks): under their example, full pane width, scroll inside */
+.md .viz { display: block; width: 100%; max-width: 100%; min-width: 0; margin-top: 0.5em; }
+.md .viz-scroll { max-width: 100%; }
+.md .viz-unavailable { font-size: var(--t-sm); color: var(--text-3); font-style: italic; }
 
 /* ======================================================================================
    SOLVE

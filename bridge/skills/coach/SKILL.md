@@ -91,6 +91,11 @@ aid. Same facts, same guarantees, same ask. Nothing added, nothing dropped.
 
    Values from the original's own examples are preferred; numbers he will meet on LeetCode
    are the point.
+   For list, tree, grid and graph problems, every example gets a drawing of its input right after
+   its **Input** line, as a ```viz block: list `{kind:"list", values:[...], cycle_to: idx|null}`, tree
+   `{kind:"tree", values:[level-order, null for gaps]}`, grid `{kind:"grid", rows:[[...]]}`, array
+   `{kind:"array", values:[...]}`. Caption = the input's extra parameters only (e.g. `pos = 1`). No
+   highlights, pointers or labels in a statement drawing — it shows the input, never a step.
 3. `## Constraints` — every size and value range, as bullets, in the original's terms
    (`1 <= n <= 10^5`). They decide the approach, and that is HIS job.
 4. The Python signature in a fenced block, LeetCode-style (`class Solution:`, method name and

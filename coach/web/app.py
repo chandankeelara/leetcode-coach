@@ -47,6 +47,7 @@ app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
 templates = Jinja2Templates(directory=str(HERE / "templates"))
 
 # Token-authenticated ingest for the leetcode.com browser extension (no login cookie).
+from .. import viz  # noqa: E402
 from . import api_ext  # noqa: E402
 app.include_router(api_ext.router)
 
@@ -89,6 +90,7 @@ def mdblock(text):
     """Escape first, then light markdown: headings, paragraphs, bullets, `code`, **bold**,
     fenced code blocks. Never emits anything but the tags below."""
     out, para, items, code = [], [], [], None
+    isviz = False
 
     def flush():
         if para:
@@ -101,7 +103,10 @@ def mdblock(text):
     for line in (text or "").replace("\r\n", "\n").split("\n"):
         if code is not None:
             if line.strip().startswith("```"):
-                out.append("<pre><code>" + html.escape("\n".join(code)) + "</code></pre>")
+                if isviz:
+                    out.append(viz.block_html("\n".join(code)))
+                else:
+                    out.append("<pre><code>" + html.escape("\n".join(code)) + "</code></pre>")
                 code = None
             else:
                 code.append(line)
@@ -109,6 +114,7 @@ def mdblock(text):
         if line.strip().startswith("```"):
             flush()
             code = []
+            isviz = line.strip()[3:].strip().lower() == "viz"
             continue
         m = _HEAD.match(line)
         b = _BULLET.match(line)
