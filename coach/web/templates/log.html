@@ -5,9 +5,9 @@
   <div class="page-head">
     <div>
       <h1>Log attempt</h1>
-      <p class="log-problem"><span class="ph-num">{{ h.number }}.</span> {{ h.title }} <span class="faint num">· started {{ started }}</span></p>
+      <p class="log-problem"><span class="prob-num">{{ h.number }}</span> {{ h.title }} <span class="log-started">started <span class="num">{{ started }}</span></span></p>
     </div>
-    <a class="btn btn-ghost btn-sm" href="/solve">Back to the problem</a>
+    <a class="btn btn-quiet btn-sm" href="/solve">Back to the problem</a>
   </div>
 
   {% if abandoned %}
@@ -19,7 +19,7 @@
 
   <form method="post" action="/log" id="log-form">
     <input type="hidden" name="csrf" value="{{ csrf }}">
-    <div class="card">
+    <div class="card log-card">
       <div class="log-row">
         <div>
           <label class="label" for="f-min">Minutes</label>
@@ -78,7 +78,7 @@
         <button class="btn {{ 'btn' if abandoned else 'btn-primary' }} btn-lg" type="submit">Log attempt</button>
       </div>
       <div class="grp grp-alt">
-        <button class="btn {{ 'btn-danger-solid' if abandoned else 'btn-danger' }} btn-lg" type="submit" name="abandoned" value="1">Log as abandoned</button>
+        <button class="btn {{ 'btn-danger' if abandoned else 'btn-outline-danger' }} btn-lg" type="submit" name="abandoned" value="1">Log as abandoned</button>
       </div>
     </div>
   </form>

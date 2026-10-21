@@ -4,7 +4,7 @@
 {% set ocls = {"clean": "badge-ok", "solved": "badge-warn", "abandoned": "badge-danger"} %}
 {% block body %}
 <div class="page page-mid">
-  <article class="card rv-card" data-outcome="{{ oc }}">
+  <article class="rv-card" data-outcome="{{ oc }}">
     <div class="rv-hero">
       <div class="rv-top">
         <span class="badge badge-lg {{ ocls.get(oc, '') }}">{{ oc or "logged" }}</span>
@@ -12,7 +12,7 @@
         {% if r.tier %}<span class="badge plain">tier {{ r.tier }}</span>{% endif %}
       </div>
       <div class="rv-title">
-        <span class="ph-num">{{ r.number }}.</span>
+        <span class="prob-num">{{ r.number }}</span>
         <h1>{{ r.title }}</h1>
       </div>
       <div class="rv-pattern">
@@ -80,7 +80,7 @@
           {% for p in r.previous_attempts|reverse %}
           <li>
             <span class="tl-dot {{ p.outcome }}"></span>
-            <div><div class="tl-day">{{ p.day }}</div><div class="tl-sub">{{ p.actual_min }} min · {{ p.bugs }} bug{{ "" if p.bugs == 1 else "s" }}</div></div>
+            <div><div class="tl-day">{{ p.day }}</div><div class="tl-sub">{{ p.actual_min }} min, {{ p.bugs }} bug{{ "" if p.bugs == 1 else "s" }}</div></div>
             <span class="badge {{ ocls.get(p.outcome, '') }}">{{ p.outcome }}</span>
           </li>
           {% endfor %}
@@ -94,8 +94,7 @@
 
   <div class="rv-foot">
     <a class="btn btn-lg" href="/dashboard">Dashboard</a>
-    <a class="btn btn-primary btn-lg" href="/">Next
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+    <a class="btn btn-primary btn-lg" href="/">Next problem</a>
   </div>
 </div>
 {% endblock %}

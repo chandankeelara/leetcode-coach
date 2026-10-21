@@ -10,8 +10,8 @@
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <button class="btn btn-primary ready-go" type="submit" autofocus>
         Next problem
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
       </button>
+      <span class="ready-hint"><kbd>Enter</kbd> to open</span>
     </form>
     <div class="ready-foot">
       <a href="/dashboard">Dashboard</a>
@@ -22,6 +22,6 @@
 {% block scripts %}
 <script>
 (function(){var el=document.querySelector("[data-today]");if(el)el.textContent=new Date().toLocaleDateString(undefined,{weekday:"long",month:"short",day:"numeric"});
-var f=document.querySelector(".ready-form");f.addEventListener("submit",function(){var b=f.querySelector("button");b.classList.add("busy");b.firstChild.textContent="Opening ";});})();
+var f=document.querySelector(".ready-form");f.addEventListener("submit",function(){var b=f.querySelector("button");b.classList.add("busy");b.textContent="Opening…";});})();
 </script>
 {% endblock %}

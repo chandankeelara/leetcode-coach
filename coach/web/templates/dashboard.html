@@ -12,29 +12,28 @@
       <h1>Dashboard</h1>
       <p class="sub">{{ st.today or "" }}</p>
     </div>
-    <a class="btn btn-primary" href="/">Next
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+    <a class="btn btn-primary" href="/">Next problem</a>
   </div>
 
   <div class="kpis">
-    <section class="card kpi {{ 'hot' if (b.backlog or 0) > 0 else 'good' }}">
+    <section class="kpi {{ 'hot' if (b.backlog or 0) > 0 else 'good' }}">
       <span class="eyebrow">Backlog</span>
       <span class="kpi-v">{{ b.backlog if b.backlog is number else "-" }}<small>owed</small></span>
       <span class="kpi-s">{% if b.start %}Counting from {{ b.start }}{% if b.days %}, {{ b.days }} days{% endif %}{% else %}Problems owed so far{% endif %}</span>
     </section>
-    <section class="card kpi">
+    <section class="kpi">
       <span class="eyebrow">Today</span>
       <span class="kpi-v">{{ b.done_today if b.done_today is number else 0 }}<small>/ {{ b.target_today if b.target_today is number else "-" }}</small></span>
       {% set tgt = b.target_today if b.target_today else 0 %}
       <div class="kpi-bar" role="img" aria-label="{{ b.done_today or 0 }} of {{ tgt }} done"><i style="width: {{ ([100, ((b.done_today or 0) / tgt * 100)]|min) if tgt else 0 }}%"></i></div>
       <span class="kpi-s">{{ b.remaining if b.remaining is number else "-" }} left today</span>
     </section>
-    <section class="card kpi">
+    <section class="kpi">
       <span class="eyebrow">Streak</span>
       <span class="kpi-v">{{ sk.current if sk.current is number else 0 }}<small>day{{ "" if sk.current == 1 else "s" }}</small></span>
       <span class="kpi-s">Longest {{ sk.longest if sk.longest is number else 0 }}</span>
     </section>
-    <section class="card kpi">
+    <section class="kpi">
       <span class="eyebrow">Clean rate</span>
       <span class="kpi-v">{{ pct(st.clean_rate) }}</span>
       <span class="kpi-s">Share of attempts solved clean</span>
@@ -61,7 +60,7 @@
   <div class="dash-grid">
     <div class="dash-col">
       <section class="card">
-        <div class="sec-head"><h2>Tier-1 patterns</h2><span class="faint" style="font-size:12.5px">clean solves to own</span></div>
+        <div class="sec-head"><h2>Tier-1 patterns</h2><span class="sec-note">clean solves to own</span></div>
         <div class="sec-body">
           {% if st.tier1 %}
           <div class="bars">
@@ -163,7 +162,7 @@
       </section>
 
       <section class="card">
-        <div class="sec-head"><h2>Strengths</h2><span class="faint" style="font-size:12.5px">level 4+</span></div>
+        <div class="sec-head"><h2>Strengths</h2><span class="sec-note">level 4+</span></div>
         <div class="sec-body">
           {% if st.strengths %}
           <ul class="skills">
@@ -184,7 +183,7 @@
   <section class="card rc">
     <div class="sec-head">
       <h2>Report card</h2>
-      <span class="faint num" style="font-size:12.5px">horizon {{ report_date }}{% if rep.horizon_days %} · {{ rep.horizon_days }} days{% endif %}</span>
+      <span class="sec-note">horizon <span class="num">{{ report_date }}</span>{% if rep.horizon_days %}, {{ rep.horizon_days }} days{% endif %}</span>
     </div>
     {% if rep %}
     {% set tp = rep.throughput or {} %}{% set q = rep.quality or {} %}{% set cv = rep.coverage or {} %}{% set pj = rep.projection or {} %}
@@ -227,7 +226,7 @@
         <h3>Projection</h3>
         {% if pj.ready_around is defined %}
         <span class="rc-big">{{ pj.ready_around }}</span>
-        <span class="faint" style="font-size:12.5px">ready around, at the current pace</span>
+        <span class="sec-note">ready around, at the current pace</span>
         <dl class="dl">
           {% if pj.cal_rate is defined %}<dt>Pace now</dt><dd>{{ n(pj.cal_rate, 2) }}/day</dd>{% endif %}
           {% if pj.need_rate is defined %}<dt>Pace needed</dt><dd>{{ n(pj.need_rate, 2) }}/day</dd>{% endif %}
@@ -243,7 +242,7 @@
     {% for bl in blocks %}{% if bl.time_vs_target is number and bl.time_vs_target > ns.mx %}{% set ns.mx = bl.time_vs_target %}{% endif %}{% if bl.bugs_per_solve is number and bl.bugs_per_solve > ns.mx %}{% set ns.mx = bl.bugs_per_solve %}{% endif %}{% endfor %}
     <div class="rc-blocks">
       <div class="sec-head" style="padding:0">
-        <h3 style="font-size:13px;color:var(--text-2)">Every {{ blocks[0].solves or 4 }} solves</h3>
+        <h3 style="font-size:13.5px;color:var(--text-2)">Every {{ blocks[0].solves or 4 }} solves</h3>
         <div class="legend"><span><i style="background:var(--accent)"></i>time / target</span><span><i style="background:var(--warn)"></i>bugs per solve</span></div>
       </div>
       <div class="qchart" style="--n: {{ blocks|length }}" role="img" aria-label="Time versus target and bugs per solve for each block of solves">
@@ -264,8 +263,7 @@
   </section>
 
   <div class="dash-foot">
-    <a class="btn btn-primary btn-lg" href="/">Next
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+    <a class="btn btn-primary btn-lg" href="/">Next problem</a>
   </div>
 </div>
 {% endblock %}

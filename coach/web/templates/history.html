@@ -24,7 +24,7 @@
         {% endfor %}
       </fieldset>
       <noscript><button class="btn btn-sm" type="submit">Filter</button></noscript>
-      <span class="tally num">{{ rows|length }}{% if rows|length != total %} of {{ total }}{% endif %} · <span style="color:var(--ok)">{{ totals.clean }} clean</span> · <span style="color:var(--warn)">{{ totals.solved }} solved</span> · <span style="color:var(--danger)">{{ totals.abandoned }} abandoned</span></span>
+      <span class="tally"><span><b>{{ rows|length }}</b>{% if rows|length != total %} of <b>{{ total }}</b>{% endif %} shown</span><span class="t-ok"><b>{{ totals.clean }}</b> clean</span><span class="t-warn"><b>{{ totals.solved }}</b> solved</span><span class="t-danger"><b>{{ totals.abandoned }}</b> abandoned</span></span>
     </form>
 
     {% if rows %}

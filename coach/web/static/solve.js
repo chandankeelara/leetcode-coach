@@ -7,6 +7,7 @@
 
   var hid = root.dataset.hid;
   var K = { code: "coach:code:" + hid, appr: "coach:appr:" + hid, draft: "coach:apprdraft:" + hid };
+  var P = { fold: "coach:probfold", split: "coach:split", tab: "coach:tab:" + hid };
   var store = {
     get: function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
     set: function (k, v) { try { localStorage.setItem(k, v); } catch (e) {} },
@@ -14,7 +15,7 @@
   };
   try {
     for (var i = localStorage.length - 1; i >= 0; i--) {
-      var key = localStorage.key(i), m = /^coach:(code|appr|apprdraft):(\d+)$/.exec(key || "");
+      var key = localStorage.key(i), m = /^coach:(code|appr|apprdraft|tab):(\d+)$/.exec(key || "");
       if (m && m[2] !== hid) localStorage.removeItem(key);
     }
   } catch (e) {}
@@ -22,6 +23,8 @@
   var isMac = /Mac|iPhone|iPad/.test(navigator.platform || "");
   if (isMac) document.querySelectorAll("kbd").forEach(function (k) { if (k.textContent === "Ctrl") k.textContent = "⌘"; });
   function modEnter(e) { return e.key === "Enter" && (e.ctrlKey || e.metaKey); }
+  var wide = matchMedia("(min-width: 1100px)");
+  var reduce = matchMedia("(prefers-reduced-motion: reduce)");
 
   /* ---------- timer ---------- */
   var elapsed0 = parseInt(root.dataset.elapsed, 10) || 0;
@@ -30,14 +33,14 @@
   var tNow = $("t-now"), tFill = $("t-fill"), timer = $("timer"), tState = $("t-state");
   var baseTitle = root.dataset.title;
   function fmt(n) {
-    var h = Math.floor(n / 3600), m = Math.floor((n % 3600) / 60), s = n % 60;
-    var mm = String(m).padStart(2, "0"), ss = String(s).padStart(2, "0");
+    var h = Math.floor(n / 3600), mi = Math.floor((n % 3600) / 60), s = n % 60;
+    var mm = String(mi).padStart(2, "0"), ss = String(s).padStart(2, "0");
     return h ? h + ":" + mm + ":" + ss : mm + ":" + ss;
   }
   function tick() {
     var n = elapsed0 + Math.floor((performance.now() - t0) / 1000);
     tNow.textContent = fmt(n);
-    tFill.style.width = Math.min(100, (n / (target * 1.5)) * 100) + "%";
+    tFill.style.transform = "scaleX(" + Math.min(1, n / (target * 1.5)) + ")";
     var st = n >= target * 1.5 ? "way-over" : n >= target ? "over" : "";
     if (timer.dataset.state !== st) {
       timer.dataset.state = st;
@@ -48,9 +51,85 @@
   tick();
   setInterval(tick, 1000);
 
+  /* ---------- panes: tabs, problem fold, split ---------- */
+  var ws = $("ws"), ed = $("ed");
+  var tabs = root.querySelectorAll(".tab");
+  function stage() { return root.dataset.stage; }
+  function setTab(name, quiet) {
+    if (name === "code" && stage() !== "code") {
+      if (!quiet) toast("Send your approach first. The editor opens after.", "warn");
+      name = "think";
+    }
+    root.dataset.tab = name;
+    tabs.forEach(function (t) { t.setAttribute("aria-selected", t.dataset.go === name ? "true" : "false"); });
+    if (name === "think") { $("tab-unread").hidden = true; toBottom(false); }
+    if (name === "code" && cm) setTimeout(function () { cm.refresh(); }, 0);
+    store.set(P.tab, name);
+  }
+  tabs.forEach(function (t) { t.addEventListener("click", function () { setTab(t.dataset.go); }); });
+  root.querySelector(".tabs").addEventListener("keydown", function (e) {
+    if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+    var order = ["prob", "think", "code"], i = order.indexOf(root.dataset.tab);
+    i = (i + (e.key === "ArrowRight" ? 1 : 2)) % 3;
+    if (order[i] === "code" && stage() !== "code") i = (i + (e.key === "ArrowRight" ? 1 : 2)) % 3;
+    setTab(order[i], true);
+    $("tab-" + order[i]).focus();
+  });
+
+  function setFold(on) {
+    root.classList.toggle("prob-folded", on);
+    store.set(P.fold, on ? "1" : "0");
+    if (cm) setTimeout(function () { cm.refresh(); }, 220);
+  }
+  $("prob-collapse").addEventListener("click", function () { setFold(true); $("prob-expand").focus(); });
+  $("prob-expand").addEventListener("click", function () { setFold(false); $("prob-collapse").focus(); });
+  if (store.get(P.fold) === "1") root.classList.add("prob-folded");
+
+  var split = $("split"), think = $("pane-think");
+  var MIN_MID = 320, MIN_ED = 380;
+  function applySplit(px) {
+    var total = think.offsetWidth + split.offsetWidth + ed.offsetWidth;
+    if (!total) return;
+    var w = Math.max(MIN_MID, Math.min(total - split.offsetWidth - MIN_ED, px));
+    ws.style.setProperty("--mid", Math.round(w) + "px");
+    return w;
+  }
+  var savedSplit = parseInt(store.get(P.split), 10);
+  if (savedSplit) ws.style.setProperty("--mid", savedSplit + "px");
+  split.addEventListener("pointerdown", function (e) {
+    if (!wide.matches) return;
+    e.preventDefault();
+    split.setPointerCapture(e.pointerId);
+    var left = think.getBoundingClientRect().left;
+    root.classList.add("dragging");
+    function move(ev) { applySplit(ev.clientX - left); }
+    function up() {
+      root.classList.remove("dragging");
+      split.removeEventListener("pointermove", move);
+      split.removeEventListener("pointerup", up);
+      split.removeEventListener("pointercancel", up);
+      store.set(P.split, String(Math.round(think.offsetWidth)));
+      if (cm) cm.refresh();
+    }
+    split.addEventListener("pointermove", move);
+    split.addEventListener("pointerup", up);
+    split.addEventListener("pointercancel", up);
+  });
+  split.addEventListener("keydown", function (e) {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    var w = applySplit(think.offsetWidth + (e.key === "ArrowRight" ? 32 : -32));
+    if (w) store.set(P.split, String(Math.round(w)));
+    if (cm) cm.refresh();
+  });
+  split.addEventListener("dblclick", function () {
+    ws.style.removeProperty("--mid");
+    store.del(P.split);
+    if (cm) cm.refresh();
+  });
+
   /* ---------- editor ---------- */
   var ta = $("code");
-  var ed = $("ed");
   var cm = null;
   var saved = store.get(K.code);
   if (saved) ta.value = saved;
@@ -65,7 +144,6 @@
       matchBrackets: true,
       autoCloseBrackets: true,
       styleActiveLine: true,
-      viewportMargin: Infinity,
       readOnly: "nocursor",
       extraKeys: {
         Tab: function (c) {
@@ -108,36 +186,53 @@
   if (cm) cm.on("change", onCodeChange);
   if (saved) savedEl.textContent = "draft restored";
 
-  function unlock(focus) {
-    ed.classList.remove("locked");
+  function openEditor(first) {
+    var was = stage();
+    root.dataset.stage = "code";
+    $("think-title").textContent = "Discussion";
     $("ed-lock").hidden = true;
-    if (cm) { cm.setOption("readOnly", false); cm.refresh(); if (focus) cm.focus(); }
-    else { ta.readOnly = false; if (focus) ta.focus(); }
+    if (cm) cm.setOption("readOnly", false); else ta.readOnly = false;
+    if (first && was !== "code") {
+      ed.classList.add("entering");
+      setTimeout(function () { ed.classList.remove("entering"); }, reduce.matches ? 0 : 420);
+      if (!wide.matches) setTab("code", true);
+      setTimeout(function () {
+        if (cm) { cm.refresh(); cm.focus(); } else ta.focus();
+      }, reduce.matches ? 0 : 60);
+    } else if (cm) setTimeout(function () { cm.refresh(); }, 0);
   }
 
   /* ---------- approach ---------- */
-  var apprForm = $("appr-form"), apprText = $("appr-text"), apprSend = $("appr-send");
-  var apprSent = $("appr-sent"), apprCard = $("appr");
+  var apprForm = $("appr"), apprText = $("appr-text"), apprSend = $("appr-send");
   var draft = store.get(K.draft);
   if (draft) apprText.value = draft;
   apprText.addEventListener("input", function () { store.set(K.draft, apprText.value); });
-  function showSent(text) {
-    $("appr-sent-text").textContent = text;
-    apprForm.hidden = true;
-    apprSent.hidden = false;
-    apprCard.classList.add("done");
-    $("appr-no").innerHTML = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg>';
+
+  var revising = false;
+  if (stage() === "code" || store.get(K.appr)) openEditor(false);
+  else setTimeout(function () { if (wide.matches || root.dataset.tab === "think") apprText.focus({ preventScroll: true }); }, 50);
+
+  function markApproach() {
+    var t = (store.get(K.appr) || "").trim();
+    var mine = log.querySelectorAll('.msg[data-role="user"]');
+    for (var j = 0; j < mine.length; j++) {
+      if (mine[j].classList.contains("is-appr")) continue;
+      var body = mine[j].querySelector(".msg-body");
+      if (j === 0 || (t && body && body.textContent.trim() === t)) {
+        mine[j].classList.add("is-appr");
+        mine[j].classList.remove("cont");
+        var who = mine[j].querySelector(".msg-who");
+        if (who) who.textContent = j === 0 ? "Your approach" : "Revised approach";
+      }
+    }
   }
-  var sentBefore = store.get(K.appr);
-  if (sentBefore) { showSent(sentBefore); unlock(false); }
-  else setTimeout(function () { if (!apprText.value) apprText.focus({ preventScroll: true }); }, 50);
 
   apprText.addEventListener("keydown", function (e) {
-    if (modEnter(e)) { e.preventDefault(); apprForm.requestSubmit ? apprForm.requestSubmit() : sendApproach(e); }
+    if (modEnter(e)) { e.preventDefault(); sendApproach(); }
+    else if (e.key === "Escape" && revising) endRevise();
   });
-  apprForm.addEventListener("submit", sendApproach);
-  function sendApproach(e) {
-    if (e) e.preventDefault();
+  apprForm.addEventListener("submit", function (e) { e.preventDefault(); sendApproach(); });
+  function sendApproach() {
     var text = apprText.value.trim();
     if (!text) { toast("Write the idea first, in plain words.", "warn"); apprText.focus(); return; }
     apprSend.classList.add("busy");
@@ -146,28 +241,33 @@
     }).then(function (res) {
       apprSend.classList.remove("busy");
       if (!res.ok) { toast("Not sent. Is the problem still open?", "error"); return; }
+      var first = stage() !== "code";
       store.set(K.appr, text);
       store.del(K.draft);
       apprText.value = "";
-      var first = ed.classList.contains("locked");
-      showSent(text);
-      unlock(first);
+      endRevise();
+      openEditor(first);
       expectReply();
       pollSoon();
-      toast(first ? "Approach sent. Editor open." : "Sent.", "ok");
+      toast(first ? "Approach sent. Editor open." : "Revised approach sent.", "ok");
     }).catch(function () {
       apprSend.classList.remove("busy");
       toast("Network error. Approach not sent.", "error");
     });
   }
+  function endRevise() {
+    revising = false;
+    root.classList.remove("revising");
+  }
+  $("appr-cancel").addEventListener("click", function () { endRevise(); input.focus(); });
   $("appr-again").addEventListener("click", function () {
-    apprSent.hidden = true;
-    apprForm.hidden = false;
+    revising = true;
+    root.classList.add("revising");
     apprText.focus();
   });
 
   /* ---------- submit ---------- */
-  var lintOut = $("lint-out"), submitBtn = $("submit"), seg = $("verdict");
+  var lintOut = $("lint-out"), submitBtn = $("submit"), seg = $("verdict"), logLink = $("log-link");
   var marked = [];
   function clearMarks() {
     if (!cm) return;
@@ -191,15 +291,20 @@
     if (cm) { cm.focus(); cm.setCursor({ line: Math.max(0, ln), ch: 0 }); cm.scrollIntoView(null, 120); }
   });
   seg.addEventListener("change", function () { seg.classList.remove("invalid"); });
+  function submitted() {
+    root.classList.add("has-submission");
+    submitBtn.classList.remove("btn-primary");
+    logLink.classList.add("btn-primary");
+  }
   function submit() {
-    if (ed.classList.contains("locked")) { toast("Send your approach first.", "warn"); apprText.focus(); return; }
+    if (stage() !== "code") { toast("Send your approach first.", "warn"); setTab("think", true); apprText.focus(); return; }
     var code = getCode();
     if (!code.trim()) { toast("Nothing to submit yet.", "warn"); return; }
     var v = seg.querySelector("input:checked");
     if (!v) {
       seg.classList.add("invalid");
       toast("Pick what LeetCode said: Accepted, Wrong answer, TLE or Runtime error.", "warn");
-      var first = seg.querySelector("input"); if (first) first.focus();
+      var f = seg.querySelector("input"); if (f) f.focus();
       return;
     }
     submitBtn.classList.add("busy");
@@ -211,6 +316,7 @@
       clearMarks();
       lintOut.innerHTML = res.html;
       markLines();
+      submitted();
       var n = lintOut.querySelectorAll("[data-line]").length;
       toast(n ? "Submitted. " + n + " lint finding" + (n === 1 ? "" : "s") + "." : "Submitted. Lint clean.", n ? "warn" : "ok");
       expectReply();
@@ -230,6 +336,7 @@
       stuckBtn.classList.remove("busy");
       if (!r.ok) throw new Error();
       toast("Coach told. Hang on.", "ok");
+      if (!wide.matches) setTab("think", true);
       expectReply();
       pollSoon();
     }).catch(function () { stuckBtn.classList.remove("busy"); toast("Could not reach the coach.", "error"); });
@@ -246,9 +353,10 @@
   var form = $("chat-form"), input = $("chat-text");
   var last = parseInt(root.dataset.last, 10) || 0;
   var waitingSince = null, waitT;
+  markApproach();
 
   function nearBottom() { return log.scrollHeight - log.scrollTop - log.clientHeight < 80; }
-  function toBottom(smooth) { log.scrollTo({ top: log.scrollHeight, behavior: smooth ? "smooth" : "auto" }); }
+  function toBottom(smooth) { log.scrollTo({ top: log.scrollHeight, behavior: smooth && !reduce.matches ? "smooth" : "auto" }); }
   toBottom(false);
 
   function expectReply() {
@@ -269,7 +377,7 @@
     var stick = nearBottom();
     var prev = log.querySelectorAll(".msg");
     var prevRole = prev.length ? prev[prev.length - 1].dataset.role : null;
-    var gotCoach = false;
+    var gotCoach = false, added = 0;
     nodes.forEach(function (n) {
       var id = parseInt(n.dataset.id, 10);
       if (log.querySelector('.msg[data-id="' + id + '"]')) return;
@@ -277,15 +385,20 @@
       n.classList.add("new");
       prevRole = n.dataset.role;
       log.insertBefore(n, typing);
+      added++;
       if (id > last) last = id;
       if (n.dataset.role === "coach") gotCoach = true;
     });
+    if (!added) return 0;
     empty.hidden = true;
+    root.classList.add("has-msgs");
+    markApproach();
     if (gotCoach && waitingSince !== null) stopTyping();
     if (stick || !gotCoach) toBottom(true);
-    if (gotCoach) noteUnread();
-    return nodes.length;
+    if (gotCoach && !wide.matches && root.dataset.tab !== "think") $("tab-unread").hidden = false;
+    return added;
   }
+  if (log.querySelector(".msg")) root.classList.add("has-msgs");
 
   var pollT, inflight = false, fails = 0;
   var live = $("live"), liveTxt = $("live-txt");
@@ -314,8 +427,8 @@
       schedule(Math.min(15000, 2000 * fails));
     });
   }
-  // statement: written by the coach a moment after the handoff; poll until it shows up
   var stmt = $("stmt-body");
+  var closing = false;
   function pollStatement() {
     if (!stmt || !stmt.hasAttribute("data-pending") || closing) return;
     fetch("/statement", { credentials: "same-origin" }).then(function (r) {
@@ -327,7 +440,6 @@
     }).catch(function () { setTimeout(pollStatement, 4000); });
   }
   setTimeout(pollStatement, 1500);
-  var closing = false;
   function closed(open) {
     if (closing) return;
     closing = true;
@@ -338,8 +450,8 @@
   document.addEventListener("visibilitychange", function () { if (!document.hidden) pollSoon(); });
 
   function autosize() {
-    input.style.height = "24px";
-    input.style.height = Math.min(160, input.scrollHeight) + "px";
+    input.style.height = "auto";
+    input.style.height = Math.min(168, input.scrollHeight) + "px";
   }
   input.addEventListener("input", autosize);
   input.addEventListener("keydown", function (e) {
@@ -365,19 +477,7 @@
     });
   }
 
-  /* ---------- phone: jump to chat ---------- */
-  var jump = $("chat-jump"), unread = $("chat-unread"), pane = $("chat-pane");
-  var chatVisible = true;
-  if ("IntersectionObserver" in window) {
-    new IntersectionObserver(function (es) {
-      chatVisible = es[0].isIntersecting;
-      jump.hidden = chatVisible;
-      if (chatVisible) unread.hidden = true;
-    }, { threshold: 0.15 }).observe(pane);
-  }
-  function noteUnread() { if (!chatVisible) unread.hidden = false; }
-  jump.addEventListener("click", function () {
-    pane.scrollIntoView({ behavior: "smooth", block: "end" });
-    setTimeout(function () { input.focus({ preventScroll: true }); }, 400);
-  });
+  var savedTab = store.get(P.tab);
+  if (savedTab && !wide.matches) setTab(savedTab, true);
+  wide.addEventListener("change", function () { if (cm) setTimeout(function () { cm.refresh(); }, 0); });
 })();

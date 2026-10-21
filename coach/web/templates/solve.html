@@ -1,127 +1,137 @@
 {% extends "base.html" %}
 {% block title %}{{ h.number }}. {{ h.title }} · Coach{% endblock %}
+{% block body_class %}app-solve{% endblock %}
 {% block head %}
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
 {% endblock %}
+{% block topbar %}
+<div class="clock" id="timer" role="timer" aria-label="Elapsed time" title="Started {{ started }}">
+  <span class="clock-now" id="t-now">00:00</span>
+  <span class="clock-track" aria-hidden="true"><span class="clock-fill" id="t-fill"></span><span class="clock-mark"></span></span>
+  <span class="clock-of"><span class="clock-of-lbl">target</span> {{ "%02d"|format(h.target_min) }}:00</span>
+  <span class="clock-state" id="t-state"></span>
+</div>
+{% endblock %}
 {% block body %}
-<section class="solve" id="solve" data-hid="{{ h.handout_id }}" data-elapsed="{{ elapsed }}" data-target="{{ h.target_min }}" data-last="{{ last }}" data-title="{{ h.number }}. {{ h.title }}">
-  <header class="ph">
-    <div class="ph-main">
-      <div class="ph-title">
-        <span class="ph-num">{{ h.number }}.</span>
-        <h1 class="ph-name">{{ h.title }}</h1>
-      </div>
-      <a class="ph-link" href="{{ h.leetcode_url }}" target="_blank" rel="noopener noreferrer">Open on LeetCode
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17L17 7M9 7h8v8"/></svg></a>
-    </div>
-    <div class="timer" id="timer" role="timer" aria-label="Elapsed time">
-      <div class="timer-row"><span class="timer-now" id="t-now">00:00</span><span class="timer-of">/ {{ "%02d"|format(h.target_min) }}:00</span></div>
-      <div class="timer-bar" aria-hidden="true"><div class="timer-fill" id="t-fill"></div><div class="timer-mark" title="Target"></div></div>
-      <div class="timer-meta"><span>started {{ started }}</span><span id="t-state"></span></div>
-    </div>
-  </header>
-
-  <div class="ws">
-    <div class="ws-main">
-      <div class="card stmt" id="stmt">
-        <div class="card-head"><h2 class="card-title">Statement</h2></div>
-        <div class="stmt-body" id="stmt-body" {% if not h.paraphrase %}data-pending="1"{% endif %}>
-          {% if h.paraphrase %}{{ h.paraphrase|mdblock }}{% else %}<p class="muted">Your coach is writing the statement…</p>{% endif %}
-        </div>
-      </div>
-
-      <div class="card appr" id="appr">
-        <div class="card-head">
-          <span class="step-no" id="appr-no">1</span>
-          <h2 class="card-title">Approach in plain words</h2>
-        </div>
-        <form class="appr-body" id="appr-form" autocomplete="off">
-          <p class="appr-instr">{{ h.instruction }}</p>
-          <label class="sr-only" for="appr-text">Your approach</label>
-          <textarea class="textarea" id="appr-text" name="approach" rows="4" placeholder="What is the idea, and what does it cost?"></textarea>
-          <div class="appr-actions">
-            <span class="hint kbd-hint"><kbd>Ctrl</kbd> <kbd>Enter</kbd> to send</span>
-            <button class="btn btn-primary" type="submit" id="appr-send">Send approach</button>
-          </div>
-        </form>
-        <div class="appr-sent" id="appr-sent" hidden>
-          <p id="appr-sent-text"></p>
-          <button class="btn btn-ghost btn-sm" type="button" id="appr-again">Send another</button>
-        </div>
-      </div>
-
-      <div class="card ed locked" id="ed">
-        <div class="card-head ed-head">
-          <span class="ed-file"><span class="step-no">2</span>solution.py</span>
-          <span class="ed-saved" id="ed-saved" aria-live="polite"></span>
-        </div>
-        <div class="ed-wrap">
-          <label class="sr-only" for="code">Code</label>
-          <textarea id="code" name="code" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="class Solution:"></textarea>
-          <div class="ed-lock" id="ed-lock">
-            <div class="ed-lock-inner">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
-              <p>Send your approach first. The editor opens after.</p>
-            </div>
-          </div>
-        </div>
-        <div class="ed-foot">
-          <fieldset class="seg verdicts" id="verdict" aria-label="Result on LeetCode">
-            {% set vcls = {"accepted": "v-ok", "wrong answer": "v-wa", "TLE": "v-tle", "runtime error": "v-re"} %}
-            {% set vlbl = {"accepted": "Accepted", "wrong answer": "Wrong answer", "TLE": "TLE", "runtime error": "Runtime error"} %}
-            {% for v in verdicts %}
-            <input type="radio" name="verdict" id="v{{ loop.index }}" value="{{ v }}">
-            <label for="v{{ loop.index }}" class="{{ vcls.get(v, '') }}"><span class="dot"></span>{{ vlbl.get(v, v) }}</label>
-            {% endfor %}
-          </fieldset>
-          <div class="grp">
-            <button class="btn btn-primary" type="button" id="submit">Submit <kbd class="kbd-hint">Ctrl</kbd><kbd class="kbd-hint">Enter</kbd></button>
-          </div>
-        </div>
-        <div class="lint-out" id="lint-out" aria-live="polite"></div>
-      </div>
-
-      <div class="actions">
-        <div class="grp">
-          <button class="btn" type="button" id="stuck">I'm stuck</button>
-          <button class="btn btn-danger" type="button" id="abandon">Skip / abandon</button>
-        </div>
-        <div class="grp">
-          <a class="btn" href="/log">Log attempt</a>
-        </div>
-      </div>
-    </div>
-
-    <aside class="ws-side" id="chat-pane" aria-label="Coach chat">
-      <div class="chat">
-        <div class="chat-head">
-          <span class="logo-mark" aria-hidden="true">C</span>
-          <h2>Coach</h2>
-          <span class="live" id="live" data-state="on"><i></i><span id="live-txt">Live</span></span>
-        </div>
-        <div class="chat-log" id="chat-log">
-          <div class="chat-empty" id="chat-empty" {% if msgs %}hidden{% endif %}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg>
-            <p>Nothing yet. Replies from your coach land here.</p>
-          </div>
-          {% include "_messages.html" %}
-          <div class="typing" id="typing" hidden role="status" aria-label="Coach is typing"><span></span><span></span><span></span></div>
-        </div>
-        <form class="chat-form" id="chat-form" autocomplete="off">
-          <div class="chat-box">
-            <label class="sr-only" for="chat-text">Message</label>
-            <textarea id="chat-text" name="text" rows="1" placeholder="Message your coach"></textarea>
-            <button class="btn btn-primary chat-send" type="submit" aria-label="Send">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg>
-            </button>
-          </div>
-          <div class="chat-hints"><span><kbd>Enter</kbd> send</span><span><kbd>Shift</kbd><kbd>Enter</kbd> new line</span></div>
-        </form>
-      </div>
-    </aside>
+{% set sent = (msgs|selectattr("role", "equalto", "user")|list|length) > 0 %}
+<section class="solve" id="solve" data-hid="{{ h.handout_id }}" data-elapsed="{{ elapsed }}" data-target="{{ h.target_min }}" data-last="{{ last }}" data-title="{{ h.number }}. {{ h.title }}" data-stage="{{ 'code' if sent else 'approach' }}" data-tab="think">
+  <div class="tabs" role="tablist" aria-label="Workspace">
+    <button class="tab" type="button" role="tab" id="tab-prob" data-go="prob" aria-controls="pane-prob" aria-selected="false">Problem</button>
+    <button class="tab" type="button" role="tab" id="tab-think" data-go="think" aria-controls="pane-think" aria-selected="true">Discuss<span class="tab-dot" id="tab-unread" hidden></span></button>
+    <button class="tab" type="button" role="tab" id="tab-code" data-go="code" aria-controls="ed" aria-selected="false">Code<svg class="tab-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></button>
   </div>
 
-  <button class="btn chat-jump" type="button" id="chat-jump">Chat <span class="unread" id="chat-unread" hidden></span></button>
+  <div class="ws" id="ws">
+    <aside class="pane prob" id="pane-prob" role="tabpanel" aria-labelledby="tab-prob">
+      <button class="prob-rail" type="button" id="prob-expand" aria-label="Show the problem" title="Show the problem">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+        <span class="rail-num">{{ h.number }}</span>
+      </button>
+      <header class="pane-head prob-head">
+        <span class="prob-num">{{ h.number }}</span>
+        <h2 class="pane-title">Problem</h2>
+        <button class="icon-btn prob-collapse" type="button" id="prob-collapse" aria-label="Collapse the problem" title="Collapse">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>
+        </button>
+      </header>
+      <div class="prob-inner">
+        <span class="prob-num prob-num-inline" aria-hidden="true">{{ h.number }}</span>
+        <h1 class="prob-title">{{ h.title }}</h1>
+        <a class="prob-link" href="{{ h.leetcode_url }}" target="_blank" rel="noopener noreferrer">Open on LeetCode <span aria-hidden="true">↗</span></a>
+        <div class="stmt" id="stmt">
+          <div class="md stmt-body" id="stmt-body" {% if not h.paraphrase %}data-pending="1"{% endif %}>
+            {% if h.paraphrase %}{{ h.paraphrase|mdblock }}{% else %}<p class="stmt-wait"><span class="pulse" aria-hidden="true"></span>Your coach is writing the statement…</p>{% endif %}
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <section class="pane think" id="pane-think" role="tabpanel" aria-labelledby="tab-think">
+      <header class="pane-head">
+        <h2 class="pane-title" id="think-title">{{ "Discussion" if sent else "Approach" }}</h2>
+        <span class="live" id="live" data-state="on" title="Connection to your coach"><i></i><span id="live-txt">Live</span></span>
+        <div class="pane-tools">
+          <button class="btn btn-quiet btn-sm" type="button" id="stuck">I'm stuck</button>
+          <button class="btn btn-quiet btn-sm quiet-danger" type="button" id="abandon">Skip / abandon</button>
+        </div>
+      </header>
+
+      <div class="chat-log" id="chat-log">
+        <div class="chat-empty" id="chat-empty" {% if msgs %}hidden{% endif %}>
+          <p>Your approach opens the thread. Replies from your coach land here.</p>
+        </div>
+        {% include "_messages.html" %}
+        <div class="typing" id="typing" hidden role="status" aria-label="Coach is typing"><span></span><span></span><span></span></div>
+      </div>
+
+      <form class="appr" id="appr" autocomplete="off">
+        <label class="appr-label" for="appr-text">{{ h.instruction }}</label>
+        <textarea class="appr-text" id="appr-text" name="approach" rows="6" placeholder="What is the idea, and what does it cost?"></textarea>
+        <div class="appr-foot">
+          <span class="hint kbd-hint"><kbd>Ctrl</kbd><kbd>Enter</kbd> to send</span>
+          <button class="btn btn-quiet btn-sm appr-cancel" type="button" id="appr-cancel">Cancel</button>
+          <button class="btn btn-primary" type="submit" id="appr-send">Send approach</button>
+        </div>
+      </form>
+
+      <form class="chat-form" id="chat-form" autocomplete="off">
+        <div class="chat-box">
+          <label class="sr-only" for="chat-text">Message</label>
+          <textarea id="chat-text" name="text" rows="1" placeholder="Reply to your coach"></textarea>
+          <button class="chat-send" type="submit" aria-label="Send">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg>
+          </button>
+        </div>
+        <div class="chat-hints">
+          <span class="kbd-hint"><kbd>Enter</kbd> send <kbd>Shift</kbd><kbd>Enter</kbd> new line</span>
+          <button class="linkish" type="button" id="appr-again">Send a revised approach</button>
+        </div>
+      </form>
+    </section>
+
+    <div class="code-rail" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
+      <span>Code opens after your approach</span>
+    </div>
+
+    <div class="split" id="split" role="separator" aria-orientation="vertical" aria-label="Resize the editor" aria-controls="ed" tabindex="0"></div>
+
+    <section class="pane code" id="ed" role="tabpanel" aria-labelledby="tab-code">
+      <header class="pane-head ed-head">
+        <div class="langs" role="group" aria-label="Language">
+          <button class="lang on" type="button" aria-pressed="true">Python</button>
+          {% for l in ["Java", "C++", "JavaScript", "Go"] %}<span class="lang off" aria-disabled="true" title="{{ l }} is not available yet">{{ l }}<em>soon</em></span>{% endfor %}
+        </div>
+      </header>
+      <div class="ed-wrap">
+        <span class="ed-saved" id="ed-saved" aria-live="polite"></span>
+        <label class="sr-only" for="code">Code</label>
+        <textarea id="code" name="code" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="class Solution:"></textarea>
+        <div class="ed-lock" id="ed-lock">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
+          <p>The editor opens after you send your approach.</p>
+        </div>
+      </div>
+      <div class="lint-out" id="lint-out" aria-live="polite"></div>
+      <footer class="ed-foot">
+        <div class="verdict-wrap">
+        <span class="verdict-lbl" id="verdict-lbl">LeetCode said</span>
+        <fieldset class="seg verdicts" id="verdict" aria-labelledby="verdict-lbl">
+          {% set vcls = {"accepted": "v-ok", "wrong answer": "v-wa", "TLE": "v-tle", "runtime error": "v-re"} %}
+          {% set vlbl = {"accepted": "Accepted", "wrong answer": "Wrong answer", "TLE": "TLE", "runtime error": "Runtime error"} %}
+          {% for v in verdicts %}
+          <input type="radio" name="verdict" id="v{{ loop.index }}" value="{{ v }}">
+          <label for="v{{ loop.index }}" class="{{ vcls.get(v, '') }}"{% if v == "TLE" %} title="Time limit exceeded"{% endif %}><span class="dot"></span>{{ vlbl.get(v, v) }}</label>
+          {% endfor %}
+        </fieldset>
+        </div>
+        <div class="ed-actions">
+          <button class="btn btn-primary" type="button" id="submit">Submit <span class="kbd-hint"><kbd>Ctrl</kbd><kbd>Enter</kbd></span></button>
+          <a class="btn" href="/log" id="log-link">Log attempt</a>
+        </div>
+      </footer>
+    </section>
+  </div>
 </section>
 
 <dialog class="confirm" id="abandon-dlg" aria-labelledby="abandon-h">
@@ -131,8 +141,8 @@
   </div>
   <form class="confirm-foot" method="post" action="/solve/abandon">
     <input type="hidden" name="csrf" value="{{ csrf }}">
-    <button class="btn btn-ghost" type="button" id="abandon-cancel">Keep going</button>
-    <button class="btn btn-danger-solid" type="submit">Abandon</button>
+    <button class="btn btn-quiet" type="button" id="abandon-cancel">Keep going</button>
+    <button class="btn btn-danger" type="submit">Abandon</button>
   </form>
 </dialog>
 {% endblock %}

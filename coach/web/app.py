@@ -43,6 +43,10 @@ app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
 templates = Jinja2Templates(directory=str(HERE / "templates"))
 
+# Token-authenticated ingest for the leetcode.com browser extension (no login cookie).
+from . import api_ext  # noqa: E402
+app.include_router(api_ext.router)
+
 _FENCE = re.compile(r"```[a-zA-Z0-9]*\n?(.*?)```", re.S)
 _TICK = re.compile(r"`([^`\n]+)`")
 _BOLD = re.compile(r"\*\*([^*\n]+)\*\*")
