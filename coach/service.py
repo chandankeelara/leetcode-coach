@@ -12,14 +12,14 @@ from datetime import date, datetime, timedelta, timezone
 
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from . import picker, rules, state
 from .catalog import default_target, pattern_name, pattern_tier
 from .db import session_scope
 from .models import (Attempt, Burned, CoachMessage, Config, CoachSession, Event, Handout, Pattern,
-                     PatternState, Problem, RetryItem, Skill, SkillEvent, TrapRecall, User,
-                     Visual)
+                     PatternState, Problem, RetryItem, Skill, SkillEvent, TrapRecall, UiEvent,
+                     User, Visual)
 
 _hasher = PasswordHasher()
 
@@ -30,6 +30,45 @@ class RevealBlocked(Exception):
 
 def _today(today):
     return today or date.today()
+
+
+# ---- live page signal ----------------------------------------------------------------------
+UI_KINDS = frozenset({"message", "statement", "visual", "editor", "handout", "presence"})
+UI_KEEP_S = 3600            # ui_events rows older than this are pruned on each emit
+
+
+def emit(user_id, kind, ref_id=None, s=None):
+    """Tell open pages something changed: append a ui_events row (user_id None = everyone).
+    The web process streams these over SSE. Pass `s` to write inside the caller's transaction,
+    so a page never sees the signal before the data. Returns the row id."""
+    if kind not in UI_KINDS:
+        raise ValueError(f"unknown ui event kind {kind!r}")
+    if s is None:
+        with session_scope() as s2:
+            return emit(user_id, kind, ref_id, s2)
+    s.execute(delete(UiEvent).where(
+        UiEvent.created_at < datetime.now() - timedelta(seconds=UI_KEEP_S)))
+    e = UiEvent(user_id=user_id, kind=kind, ref_id=ref_id)
+    s.add(e)
+    s.flush()
+    return e.id
+
+
+def ui_events_since(user_id, since_id=0, limit=200):
+    """[{"id", "kind", "ref_id"}] of ui_events after since_id for this user (and everyone)."""
+    with session_scope() as s:
+        rows = s.scalars(select(UiEvent).where(
+            UiEvent.id > (since_id or 0),
+            (UiEvent.user_id == user_id) | UiEvent.user_id.is_(None))
+            .order_by(UiEvent.id).limit(limit))
+        return [{"id": e.id, "kind": e.kind, "ref_id": e.ref_id} for e in rows]
+
+
+def ui_last_id():
+    """Newest ui_events id (0 if none): where a freshly opened stream starts."""
+    from sqlalchemy import func
+    with session_scope() as s:
+        return s.scalar(select(func.max(UiEvent.id))) or 0
 
 
 # ---- users ---------------------------------------------------------------------------------
@@ -139,11 +178,16 @@ def next_problem(user_id, today=None, force_new=False):
                                   Handout.slot != "imported")
             .order_by(Handout.id.desc())
         ).first()
+        skipped = False
         if open_h is not None and open_h.handed_at.date() == today:
             if not force_new:
                 return picker.handoff_for(open_h, s.get(Problem, open_h.problem_number))
             open_h.status = "skipped"
-        return picker.pick_next(s, user_id, today)
+            skipped = True
+        out = picker.pick_next(s, user_id, today)
+        if out is not None or skipped:
+            emit(user_id, "handout", out.handout_id if out is not None else open_h.id, s)
+        return out
 
 
 def skip_problem(handout_id):
@@ -152,6 +196,20 @@ def skip_problem(handout_id):
         h = s.get(Handout, handout_id)
         if h.status == "open":
             h.status = "skipped"
+            emit(h.user_id, "handout", h.id, s)
+
+
+def reset_timer(user_id, handout_id):
+    """Restart the clock of an open handout from now (handed_at = now). Only for a problem
+    opened long before he actually started. ValueError unless it is his and open.
+    Returns {"ok": True, "handout_id", "started_at"}."""
+    with session_scope() as s:
+        h = s.get(Handout, handout_id)
+        if h is None or h.user_id != user_id or h.status != "open":
+            raise ValueError(f"no open handout {handout_id}")
+        h.handed_at = datetime.now()
+        emit(user_id, "handout", h.id, s)
+        return {"ok": True, "handout_id": h.id, "started_at": h.handed_at.isoformat()}
 
 
 # ---- the statement (written by the coach, stored on the problem) ----------------------------
@@ -221,6 +279,7 @@ def set_statement(user_id, handout_id, text):
         if bad:
             raise ValueError("leak: " + ", ".join(bad))
         p.paraphrase = text
+        emit(user_id, "statement", h.id, s)
         return {"ok": True, "handout_id": h.id, "number": p.number}
 
 
@@ -270,6 +329,8 @@ def show_visual(user_id, handout_id, kind, spec):
         s.add(CoachMessage(user_id=user_id, handout_id=h.id, role="coach",
                            content=f"See the problem pane: {label}"))
         s.flush()
+        emit(user_id, "visual", v.id, s)
+        emit(user_id, "message", None, s)
         return {"id": v.id, "html": html_out}
 
 
@@ -297,6 +358,7 @@ def clear_visuals(user_id, handout_id):
                                               Visual.handout_id == handout_id)).all()
         for v in rows:
             s.delete(v)
+        emit(user_id, "visual", handout_id, s)
         return len(rows)
 
 
@@ -355,6 +417,7 @@ def log_attempt(user_id, handout_id=None, number=None, actual_min=0, bugs=0, opt
         s.flush()
         if h:
             h.status = "logged"
+            emit(user_id, "handout", h.id, s)
 
         # retry queue
         should_queue = (abandoned or actual_min > rules.CLEAN_TIME_FACTOR * target_min
@@ -525,10 +588,22 @@ def coach_seen(now=None):
     now = now or datetime.now(timezone.utc)
     with session_scope() as s:
         row = s.get(Config, SEEN_KEY)
+        prev = _parse_utc(row.value if row else None)
         if row is None:
             s.add(Config(key=SEEN_KEY, value=now.isoformat()))
         else:
             row.value = now.isoformat()
+        # presence signal for open pages, at most once per SEEN_EVERY_S
+        if prev is None or abs((now - prev).total_seconds()) >= SEEN_EVERY_S * 0.9:
+            emit(None, "presence", None, s)
+
+
+def _parse_utc(iso):
+    try:
+        ts = datetime.fromisoformat(iso)
+    except (TypeError, ValueError):
+        return None
+    return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
 
 
 def coach_online(now=None):
@@ -580,6 +655,7 @@ def post_message(user_id, role, content, handout_id=None):
         m = CoachMessage(user_id=user_id, handout_id=handout_id, role=role, content=content)
         s.add(m)
         s.flush()
+        emit(user_id, "message", m.id, s)
         return m.id
 
 
@@ -590,6 +666,7 @@ def _set_editor(user_id, handout_id, on, message=None):
         if h is None or h.user_id != user_id:
             return {"ok": False, "error": "no such handout"}
         h.editor_open = on
+        emit(user_id, "editor", h.id, s)
     if message:
         post_message(user_id, "coach", message, handout_id=handout_id)
     return {"ok": True}
@@ -617,6 +694,14 @@ def list_messages(user_id, since_id=0, limit=200):
             .order_by(CoachMessage.id).limit(limit))
         return [{"id": m.id, "role": m.role, "content": m.content, "handout_id": m.handout_id,
                  "created_at": m.created_at.isoformat()} for m in rows]
+
+
+def last_message_id(user_id):
+    """Newest chat message id of the user (0 if none)."""
+    from sqlalchemy import func
+    with session_scope() as s:
+        return s.scalar(select(func.max(CoachMessage.id)).where(
+            CoachMessage.user_id == user_id)) or 0
 
 
 # ---- report --------------------------------------------------------------------------------

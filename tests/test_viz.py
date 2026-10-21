@@ -205,5 +205,5 @@ def test_partial_and_assets_exist():
     part = (web / "templates" / "_visuals.html").read_text(encoding="utf-8")
     assert 'id="viz-items"' in part
     js = (web / "static" / "viz.js").read_text(encoding="utf-8")
-    assert "/visuals?since=" in js and "visibilitychange" in js
+    assert "/visuals?since=" in js and 'coachLive.on("visual"' in js
     assert re.search(r"\.viz-hl", (web / "static" / "viz.css").read_text(encoding="utf-8"))

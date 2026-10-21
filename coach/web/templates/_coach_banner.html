@@ -2,42 +2,45 @@
   <span class="cb-msg"><strong>Coach not connected.</strong> 1. Open Claude Code. 2. Type <code>/leetcode-coach:coach</code>. 3. Say 'next' here when the dot turns green.</span>
   <a class="cb-link" href="/help/connect">Setup</a>
 </div>
+<script src="/static/live.js"></script>
 <script>
 (function () {
   var b = document.getElementById("coach-banner");
   if (!b) return;
-  var live = document.getElementById("live"), liveTxt = document.getElementById("live-txt");
-  var offPolls = 0, confirmedOff = false;
+  var live, liveTxt;
+  function els() { live = document.getElementById("live"); liveTxt = document.getElementById("live-txt"); }
+  var off = b.hasAttribute("hidden") ? false : true;
   function apply() {
-    b.hidden = !confirmedOff;
-    b.classList.toggle("is-hidden", !confirmedOff);
-    if (live && confirmedOff) {
+    els();
+    b.hidden = !off;
+    b.classList.toggle("is-hidden", !off);
+    if (live && off) {
       live.dataset.state = "off"; live.title = "Coach not connected";
       if (liveTxt) liveTxt.textContent = "Offline";
-    } else if (live) { live.title = "Connection to your coach"; }
+    } else if (live) {
+      live.title = "Connection to your coach";
+      if (live.dataset.state === "off" && (!window.coachLive || coachLive.state() !== "failed")) {
+        live.dataset.state = "on";
+        if (liveTxt) liveTxt.textContent = "Live";
+      }
+    }
   }
-  // exposed so the page's own /messages poll can feed it via the X-Coach-Online header
-  window.coachPresence = function (online) {
-    if (online) { offPolls = 0; confirmedOff = false; }
-    else { offPolls++; if (offPolls >= 2) confirmedOff = true; }
-    apply();
-  };
-  if (live) new MutationObserver(function () {
-    if (confirmedOff && (live.dataset.state !== "off" || (liveTxt && liveTxt.textContent !== "Offline"))) apply();
-  }).observe(live, { attributes: true, childList: true, subtree: true, characterData: true });
-  var f0 = window.fetch;   // every /messages poll also carries the signal
-  window.fetch = function (u) {
-    var p = f0.apply(this, arguments);
-    if (typeof u === "string" && u.indexOf("/messages") === 0)
-      p.then(function (r) { var v = r.headers.get("X-Coach-Online"); if (v !== null) window.coachPresence(v === "1"); }, function () {});
-    return p;
-  };
-  function tick() {
+  // presence comes from the live stream (hello + presence events); the server already
+  // applies the 90 s heartbeat window, so one "offline" is authoritative.
+  window.coachPresence = function (online) { off = !online; apply(); };
+  function watch() {
+    els();
+    if (live) new MutationObserver(function () {
+      if (off && (live.dataset.state !== "off" || (liveTxt && liveTxt.textContent !== "Offline"))) apply();
+    }).observe(live, { attributes: true, childList: true, subtree: true, characterData: true });
+  }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", watch); else watch();
+  if (!window.coachLive) return;
+  coachLive.on("presence", function (d) { if (typeof d.online === "boolean") window.coachPresence(d.online); });
+  coachLive.on("resync", function (d) {   // fallback tick while the stream is down
+    if (typeof d.online === "boolean") return;
     fetch("/coach/status", { credentials: "same-origin" }).then(function (r) { return r.ok ? r.json() : null; })
-      .then(function (j) { if (j) window.coachPresence(!!j.online); })
-      .catch(function () {})
-      .then(function () { setTimeout(tick, document.hidden ? 15000 : 5000); });
-  }
-  setTimeout(tick, 1500);
+      .then(function (j) { if (j) window.coachPresence(!!j.online); }).catch(function () {});
+  });
 })();
 </script>

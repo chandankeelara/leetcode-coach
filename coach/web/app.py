@@ -1,6 +1,8 @@
 """Web UI. RULE ZERO by structure: pages that hand out a problem (/, /solve, /log) never render
 progress; progress (/dashboard) is unreachable while a handout is open."""
+import asyncio
 import html
+import json
 import os
 import re
 import secrets
@@ -8,11 +10,12 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from fastapi import FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from markupsafe import Markup
+from starlette.concurrency import run_in_threadpool
 
 HERE = Path(__file__).parent
 COOKIE = "coach_session"
@@ -392,6 +395,117 @@ async def messages(request: Request, since: int = 0):
     resp.headers["X-Coach-Online"] = "1" if service().coach_online()["online"] else "0"
     resp.headers["X-Editor-Open"] = "1" if _editor_open(sess["uid"], h) else "0"
     return resp
+
+
+def handout_state(uid):
+    """{open_handout_id, editor_open, started_at, target_min, elapsed_s} of the open problem
+    (all None when none is open). The page compares it against what it shows."""
+    h = service().current_handout(uid)
+    if not h:
+        return {"open_handout_id": None, "editor_open": False, "started_at": None,
+                "target_min": None, "elapsed_s": None}
+    return {"open_handout_id": h.handout_id, "editor_open": _editor_open(uid, h),
+            "started_at": h.started_at.isoformat(), "target_min": h.target_min,
+            "elapsed_s": elapsed_s(h)}
+
+
+@app.get("/handout/state")
+async def handout_state_route(request: Request):
+    sess = require(request)
+    resp = JSONResponse(await run_in_threadpool(handout_state, sess["uid"]))
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+STREAM_POLL_S = 0.25        # how often /stream reads ui_events
+STREAM_PING_S = 15.0        # SSE comment keep-alive
+STREAM_PRESENCE_S = 2.0     # how often /stream re-checks coach_online (catches going offline)
+STREAM_MAX_S = 300.0        # recycle each stream; EventSource reconnects with Last-Event-ID
+
+
+def _sse(kind, data, eid=None):
+    head = f"id: {eid}\n" if eid is not None else ""
+    return f"{head}event: {kind}\ndata: {json.dumps(data)}\n\n"
+
+
+def _last_message_id(uid):
+    f = getattr(service(), "last_message_id", None)
+    if f:
+        return f(uid)
+    msgs = service().messages(uid, 0)
+    return msgs[-1]["id"] if msgs else 0
+
+
+def _hello(uid):
+    st = handout_state(uid)
+    return {"open_handout_id": st["open_handout_id"], "editor_open": st["editor_open"],
+            "started_at": st["started_at"], "online": bool(service().coach_online()["online"]),
+            "last_message_id": _last_message_id(uid)}
+
+
+@app.get("/stream")
+async def stream(request: Request, since: int | None = None, max_events: int = 0,
+                 max_s: float = 0):
+    """Server-sent events: one per ui_events row for this user after `since` (or the
+    Last-Event-ID header; default: from now). Starts with `hello` (state to resync from).
+    `presence` {"online"} is sent when coach_online() flips. `max_events` / `max_s` end the
+    stream early (tests only)."""
+    sess = require(request)
+    uid = sess["uid"]
+    svc = service()
+    if since is None:
+        try:
+            since = int(request.headers.get("last-event-id") or "")
+        except ValueError:
+            since = None
+    if since is None:
+        since = await run_in_threadpool(svc.ui_last_id)
+
+    async def gen():
+        loop = asyncio.get_running_loop()
+        t_start = loop.time()
+        cursor, sent = since, 0
+        hello = await run_in_threadpool(_hello, uid)
+        online = hello["online"]
+        yield _sse("hello", hello, cursor)
+        sent += 1
+        last_ping = last_presence = loop.time()
+        while not (max_events and sent >= max_events):
+            if loop.time() - t_start >= (max_s or STREAM_MAX_S):
+                break
+            if await request.is_disconnected():
+                break
+            rows = await run_in_threadpool(svc.ui_events_since, uid, cursor)
+            for r in rows:
+                cursor = r["id"]
+                if r["kind"] == "presence":
+                    now_on = bool((await run_in_threadpool(svc.coach_online))["online"])
+                    last_presence = loop.time()
+                    if now_on == online:
+                        continue
+                    online = now_on
+                    yield _sse("presence", {"ref_id": None, "online": online}, cursor)
+                else:
+                    yield _sse(r["kind"], {"ref_id": r["ref_id"]}, cursor)
+                sent += 1
+                if max_events and sent >= max_events:
+                    return
+            now = loop.time()
+            if now - last_presence >= STREAM_PRESENCE_S:
+                last_presence = now
+                now_on = bool((await run_in_threadpool(svc.coach_online))["online"])
+                if now_on != online:
+                    online = now_on
+                    yield _sse("presence", {"ref_id": None, "online": online}, cursor)
+                    sent += 1
+                    continue
+            if now - last_ping >= STREAM_PING_S:
+                last_ping = now
+                yield ": ping\n\n"
+            await asyncio.sleep(STREAM_POLL_S)
+
+    return StreamingResponse(gen(), media_type="text/event-stream", headers={
+        "Cache-Control": "no-store", "X-Accel-Buffering": "no", "Connection": "keep-alive"})
 
 
 @app.get("/coach/status")

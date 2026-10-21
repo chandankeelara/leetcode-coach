@@ -25,4 +25,10 @@
 (function(){var el=document.querySelector("[data-today]");if(el)el.textContent=new Date().toLocaleDateString(undefined,{weekday:"long",month:"short",day:"numeric"});
 var f=document.querySelector(".ready-form");f.addEventListener("submit",function(){var b=f.querySelector("button");b.classList.add("busy");b.textContent="Opening…";});})();
 </script>
+<script>
+/* The coach can hand out a problem from the terminal: follow it to /solve. */
+(function(){if(!window.coachLive)return;var going=false;
+function check(){if(going)return;fetch("/handout/state",{credentials:"same-origin",cache:"no-store"}).then(function(r){return r.ok?r.json():null;}).then(function(st){if(st&&st.open_handout_id!==null&&!going){going=true;location.href="/solve";}}).catch(function(){});}
+coachLive.on("handout",check);coachLive.on("resync",function(d){if(d&&d.open_handout_id!==undefined){if(d.open_handout_id!==null&&!going){going=true;location.href="/solve";}}else check();});})();
+</script>
 {% endblock %}

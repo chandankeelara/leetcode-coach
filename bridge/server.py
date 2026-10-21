@@ -229,6 +229,18 @@ def lock_editor() -> dict:
 
 
 @mcp.tool()
+def reset_timer() -> dict:
+    """Restart the clock on the open problem from now."""
+    hid = _open_handout()
+    if hid is None:
+        return {"error": "no open problem"}
+    try:
+        return _jsonable(svc().reset_timer(uid(), hid))
+    except ValueError as e:
+        return {"error": str(e)}
+
+
+@mcp.tool()
 def clear_visuals() -> dict:
     """Remove every drawing from his problem pane for the open problem."""
     hid = _open_handout()

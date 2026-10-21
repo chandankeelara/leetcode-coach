@@ -84,5 +84,11 @@ class FakeService:
                  "actual_min": 30, "bugs": 2, "hints": 1, "optimal": True, "derived_cold": False,
                  "outcome": "solved", "notes": "", "source": "app"}]
 
+    def ui_events_since(self, uid, since_id=0):
+        return []
+
+    def ui_last_id(self):
+        return 0
+
     def lint(self, src):
         return [(1, "COST", "x")] if "bad" in src else []

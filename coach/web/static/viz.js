@@ -1,5 +1,5 @@
-/* Coach visuals: polls /visuals?since=N every 2 s while the page is visible and appends new
-   illustrations under the statement. Newest open, older ones folded to their caption. A dot
+/* Coach visuals: fetches /visuals?since=N on each `visual` event from the live stream
+   (static/live.js; also on resync) and appends new illustrations under the statement. Newest open, older ones folded to their caption. A dot
    on the folded problem rail (and the mobile Problem tab) marks unseen ones. */
 (function () {
   "use strict";
@@ -10,7 +10,7 @@
   var root = document.getElementById("solve") || document.body;
   var rail = document.getElementById("prob-expand");
   var tab = document.getElementById("tab-prob");
-  var last = 0, shown = 0, timer = null, busy = false, handout = null;
+  var last = 0, shown = 0, busy = false, again = false, handout = null;
   var LABEL = { array: "Array", grid: "Grid", list: "List", tree: "Tree", steps: "Step table",
                 io: "Examples", html: "Illustration" };
 
@@ -94,14 +94,8 @@
     } else markUnread(true);
   }
 
-  function schedule(ms) {
-    clearTimeout(timer);
-    if (document.hidden) { timer = null; return; }
-    timer = setTimeout(poll, ms);
-  }
-
   function poll() {
-    if (busy) return;
+    if (busy) { again = true; return; }
     busy = true;
     fetch("/visuals?since=" + last, { credentials: "same-origin", cache: "no-store" })
       .then(function (r) {
@@ -111,19 +105,22 @@
         return r.json().then(function (rows) { return { rows: rows, h: h, total: total }; });
       })
       .then(function (d) {
-        busy = false;
-        if (handout !== null && d.h !== handout) { reset(); handout = d.h; schedule(0); return; }
+        if (handout !== null && d.h !== handout) { reset(); handout = d.h; again = true; return; }
         handout = d.h;
-        if (!isNaN(d.total) && d.total < shown + d.rows.length) { reset(); schedule(0); return; }
+        /* fewer than shown: the coach cleared them; rebuild from scratch */
+        if (!isNaN(d.total) && d.total < shown + d.rows.length) { reset(); again = true; return; }
         add(d.rows);
-        schedule(2000);
       })
-      .catch(function () { busy = false; schedule(6000); });
+      .catch(function () {})
+      .then(function () {
+        busy = false;
+        if (again) { again = false; poll(); }
+      });
   }
 
-  document.addEventListener("visibilitychange", function () {
-    if (!document.hidden) schedule(0);
-    else { clearTimeout(timer); timer = null; }
-  });
-  schedule(300);
+  if (window.coachLive) {
+    coachLive.on("visual", poll);
+    coachLive.on("resync", poll);
+  }
+  poll();
 })();

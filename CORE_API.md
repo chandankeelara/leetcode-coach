@@ -59,6 +59,9 @@ next_problem(user_id: int, today: date | None = None, force_new: bool = False) -
 #   an open handout from today is returned again (same id and start time);
 #   force_new=True marks it skipped and picks again. None = nothing passes the filters.
 skip_problem(handout_id: int) -> None                       # status -> skipped; still blocks 7 days
+reset_timer(user_id: int, handout_id: int) -> dict          # {"ok","handout_id","started_at"}
+#   handed_at = now on an open handout (only when it was opened long before he started);
+#   ValueError unless his and open. Emits `handout`.
 
 log_attempt(user_id: int, handout_id: int | None = None, number: int | None = None,
             actual_min: int = 0, bugs: int = 0, optimal: bool = True, derived_cold: bool = True,
@@ -144,6 +147,21 @@ async wait_event(user_id: int, timeout_s: float = 25.0, poll_s: float = 0.25) ->
 post_message(user_id: int, role: str, content: str, handout_id: int | None = None) -> int
 list_messages(user_id: int, since_id: int = 0, limit: int = 200) -> list[dict]
 #   [{"id","role","content","handout_id","created_at"}]  role: user | coach | system
+last_message_id(user_id) -> int                    # 0 if none
+
+# live page signal (ui_events; the web process streams it as SSE on /stream)
+emit(user_id: int | None, kind: str, ref_id: int | None = None, s=None) -> int
+#   append a ui_events row (user_id None = every user); prunes rows older than 1 h. Pass the
+#   caller's session `s` to commit with the data. kind and who emits it:
+#     message   post_message (and show_visual's chat line)        ref = message id
+#     statement set_statement                                     ref = handout id
+#     visual    show_visual (ref = visual id), clear_visuals (ref = handout id)
+#     editor    unlock_editor / lock_editor                       ref = handout id
+#     handout   next_problem when a new handout is made or force_new skips one, skip_problem,
+#               log_attempt, reset_timer                          ref = handout id
+#     presence  coach_seen, at most once per 5 s                  user_id None
+ui_events_since(user_id, since_id=0, limit=200) -> list   # [{"id","kind","ref_id"}] (his + broadcast)
+ui_last_id() -> int
 ```
 
 Exception: `service.RevealBlocked`.
@@ -155,7 +173,7 @@ Exception: `service.RevealBlocked`.
   lacks (additive, nullable only). First use: `skills.updated_on`.
 * `coach.models`: all tables (users, patterns, problems, attempts, handouts, sessions, skills,
   skill_events, retry_items, pattern_state, burned, oa_sims, trap_recall, config, events,
-  coach_messages, visuals).
+  coach_messages, visuals, ui_events).
 * `coach.lint.lint(src) -> [(line, kind, msg)]`, kinds USELESS, NONE-ASSIGN, COST, ALIAS, SYNTAX.
   Not wired into `log_attempt`; the caller runs it on the pasted code.
 * `coach.rules`: the pure functions (`backlog`, `streak`, `tier_progress`, `retry_due`,
@@ -167,7 +185,8 @@ Exception: `service.RevealBlocked`.
 `coach_status`, `next_problem`, `set_statement`, `wait_for_event`, `say`, `log_attempt`,
 `reveal`, `burn_pattern`, `lint`, `report`, and (new) `log_trap_recall`, `record_refire`,
 `set_skill`, `write_session_log`, `session_summary`, `show_visual(kind, spec)` ->
-{ok, id} | {error}, `clear_visuals()` -> {ok, cleared} (both act on the open handout). Chat side effects:
+{ok, id} | {error}, `clear_visuals()` -> {ok, cleared}, `reset_timer()` -> {ok, handout_id,
+started_at} | {error} (all act on the open handout). Chat side effects:
 
 * `next_problem` posts the handoff text (never the mode), then "Statement coming." when
   `paraphrase` is null.
@@ -178,7 +197,27 @@ Exception: `service.RevealBlocked`.
 `GET /visuals?since=N` (login) -> JSON `[{id, html, caption, kind}]` for the open handout,
 ids > N. Headers: `X-Visual-Count` (total for the handout; fewer than shown = cleared, the
 page rebuilds), `X-Open-Handout`. Page side: `templates/_visuals.html` + `static/viz.js`
-(polls every 2 s while visible) + `static/viz.css`.
+(fetches on each `visual` event) + `static/viz.css`.
+
+## Web: live stream
+
+`GET /stream` (login) is `text/event-stream`. Cursor: `?since=<ui_events id>`, else the
+`Last-Event-ID` header, else "from now". First event `hello` {open_handout_id, editor_open,
+started_at, online, last_message_id} (id = the cursor), then one event per ui_events row
+(`id: <row id>`, `event: <kind>`, `data: {"ref_id": ..}`), `presence` {"online"} only when
+coach_online() flips (re-checked every 2 s too, so going offline shows), `: ping` every 15 s.
+The DB is read every 250 ms. `max_events` / `max_s` stop the stream early (tests only).
+
+`GET /handout/state` (login) -> {open_handout_id, editor_open, started_at, target_min,
+elapsed_s} (all null/false with nothing open).
+
+Page side: `static/live.js` (loaded by `_coach_banner.html`) holds the one EventSource,
+reconnects with backoff, and exposes `coachLive.on(kind, fn)`, `coachLive.onState(fn)`.
+`resync` fires after every `hello` and, only while the stream is failed, every 20 s. Handlers:
+message -> `/messages?since=`; statement -> `/statement`; visual -> `/visuals?since=`;
+editor / handout -> `/handout/state` (open/lock the editor, restart the clock when
+started_at changes, navigate when the open handout changes: reveal if closed, else /solve);
+presence -> banner + Live dot. The `/` interstitial goes to `/solve` when a handout opens.
 
 ## CLI
 

@@ -212,3 +212,18 @@ class Visual(Base):
     html: Mapped[str] = mapped_column(Text)
     caption: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class UiEvent(Base):
+    """Change signal for open pages: every coach-side write appends one row; the web process
+    streams them over SSE (/stream). user_id NULL = every user (presence). Rows older than an
+    hour are pruned on each emit. kind: message | statement | visual | editor | handout |
+    presence."""
+    __tablename__ = "ui_events"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    kind: Mapped[str] = mapped_column(String(16))
+    ref_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    # AUTOINCREMENT: ids never reused after pruning, so a page's `since` stays valid.
+    __table_args__ = {"sqlite_autoincrement": True}

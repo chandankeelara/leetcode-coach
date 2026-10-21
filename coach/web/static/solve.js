@@ -37,6 +37,15 @@
     var mm = String(mi).padStart(2, "0"), ss = String(s).padStart(2, "0");
     return h ? h + ":" + mm + ":" + ss : mm + ":" + ss;
   }
+  var startedAt = null;   /* ISO from /handout/state; a change = the coach reset the clock */
+  function restartTimer(elapsed, iso) {
+    elapsed0 = Math.max(0, elapsed | 0);
+    t0 = performance.now();
+    startedAt = iso;
+    var d = iso ? new Date(iso) : null;
+    if (d && !isNaN(d)) timer.title = "Started " + String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+    tick();
+  }
   function tick() {
     var n = elapsed0 + Math.floor((performance.now() - t0) / 1000);
     tNow.textContent = fmt(n);
@@ -473,13 +482,18 @@
   }
   if (log.querySelector(".msg")) root.classList.add("has-msgs");
 
-  var pollT, inflight = false, fails = 0;
+  /* ---------- live: every coach write arrives on the shared stream (static/live.js) ---------- */
+  var inflight = false, again = false, closing = false;
   var live = $("live"), liveTxt = $("live-txt");
   function setLive(on) { live.dataset.state = on ? "on" : "off"; liveTxt.textContent = on ? "Live" : "Offline"; }
-  function schedule(ms) { clearTimeout(pollT); pollT = setTimeout(poll, ms); }
-  function pollSoon() { schedule(150); }
-  function poll() {
-    if (inflight) { schedule(500); return; }
+  function applyEditor(ed) {
+    if (ed === "1" && stage() !== "code") { enterDiscuss(); openEditor(true); toast("Editor open.", "ok"); }
+    else if (ed === "0" && stage() === "code") lockEditor();
+  }
+  function pollSoon() { fetchMessages(); }
+  function fetchMessages() {
+    if (closing) return;
+    if (inflight) { again = true; return; }
     inflight = true;
     fetch("/messages?since=" + last, { credentials: "same-origin", headers: { "Accept": "text/html" } }).then(function (r) {
       if (r.redirected && /\/login/.test(r.url)) { location.href = "/login"; return; }
@@ -487,43 +501,67 @@
       var open = r.headers.get("X-Open-Handout");
       var ed = r.headers.get("X-Editor-Open");
       return r.text().then(function (t) {
-        inflight = false;
-        fails = 0;
-        setLive(true);
         append(t);
-        if (ed === "1" && stage() !== "code") { enterDiscuss(); openEditor(true); toast("Editor open.", "ok"); }
-        else if (ed === "0" && stage() === "code") lockEditor();
-        if (open !== null && open !== hid) { closed(open); return; }
-        schedule(document.hidden ? 6000 : 2000);
+        applyEditor(ed);
+        if (open !== null && open !== hid) closed(open);
       });
-    }).catch(function () {
+    }).catch(function () {}).then(function () {
       inflight = false;
-      fails++;
-      if (fails >= 2) setLive(false);
-      schedule(Math.min(15000, 2000 * fails));
+      if (again) { again = false; fetchMessages(); }
     });
   }
-  var stmt = $("stmt-body");
-  var closing = false;
-  function pollStatement() {
-    if (!stmt || !stmt.hasAttribute("data-pending") || closing) return;
-    fetch("/statement", { credentials: "same-origin" }).then(function (r) {
+  function fetchState() {
+    if (closing) return;
+    fetch("/handout/state", { credentials: "same-origin", cache: "no-store" }).then(function (r) {
+      if (r.redirected && /\/login/.test(r.url)) { location.href = "/login"; return null; }
+      if (!r.ok) throw new Error(r.status);
+      return r.json();
+    }).then(function (st) {
+      if (!st || closing) return;
+      var open = st.open_handout_id === null ? "" : String(st.open_handout_id);
+      if (open !== hid) { closed(open); return; }
+      applyEditor(st.editor_open ? "1" : "0");
+      if (st.target_min) target = st.target_min * 60;
+      if (startedAt === null) startedAt = st.started_at;
+      else if (st.started_at && st.started_at !== startedAt) {
+        restartTimer(st.elapsed_s, st.started_at);
+        toast("Clock restarted.", "info");
+      }
+    }).catch(function () {});
+  }
+  var stmt = $("stmt-body"), stmtHtml = null;
+  function fetchStatement() {
+    if (!stmt || closing) return;
+    fetch("/statement", { credentials: "same-origin", cache: "no-store" }).then(function (r) {
       if (!r.ok) throw new Error(r.status);
       return r.json();
     }).then(function (d) {
-      if (d.html) { stmt.innerHTML = d.html; stmt.removeAttribute("data-pending"); return; }
-      setTimeout(pollStatement, 2000);
-    }).catch(function () { setTimeout(pollStatement, 4000); });
+      if (d.handout_id !== null && String(d.handout_id) !== hid) return;
+      if (!d.html || d.html === stmtHtml) return;
+      var first = stmt.hasAttribute("data-pending");
+      stmtHtml = d.html;
+      stmt.innerHTML = d.html;
+      stmt.removeAttribute("data-pending");
+      if (!first) toast("Statement updated.", "info");
+    }).catch(function () {});
   }
-  setTimeout(pollStatement, 1500);
   function closed(open) {
     if (closing) return;
     closing = true;
     if (open) { toast("A different problem is open. Reloading.", "warn"); setTimeout(function () { location.href = "/solve"; }, 900); }
     else { toast("This problem was closed.", "info"); setTimeout(function () { location.href = "/reveal/" + hid; }, 900); }
   }
-  schedule(2000);
-  document.addEventListener("visibilitychange", function () { if (!document.hidden) pollSoon(); });
+  if (window.coachLive) {
+    coachLive.onState(function (st) { setLive(st !== "failed"); });
+    coachLive.on("message", fetchMessages);
+    coachLive.on("statement", fetchStatement);
+    coachLive.on("editor", fetchState);
+    coachLive.on("handout", fetchState);
+    coachLive.on("resync", function () {
+      fetchMessages(); fetchState();
+      if (stmt && stmt.hasAttribute("data-pending")) fetchStatement();
+    });
+  }
 
   function autosize() {
     input.style.height = "auto";
