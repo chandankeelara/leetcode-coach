@@ -1,18 +1,109 @@
 {% extends "base.html" %}
+{% block title %}Log attempt · Coach{% endblock %}
 {% block body %}
-<h1>Log attempt</h1>
-<p>{{ h.number }}. {{ h.title }}</p>
-<form method="post" action="/log">
-<input type="hidden" name="csrf" value="{{ csrf }}">
-<label>Actual minutes <input name="actual_min" type="number" min="0" value="{{ minutes }}"></label>
-<label>Bugs <input name="bugs" type="number" min="0" value="0"></label>
-<label>Hints <input name="hints" type="number" min="0" value="0"></label>
-<label>Complexity optimal?
-<select name="optimal"><option value="yes">yes</option><option value="no">no</option></select></label>
-<label>Derived the approach myself?
-<select name="derived_cold"><option value="yes">yes</option><option value="no">no</option></select></label>
-<label>Notes <textarea name="notes" rows="3"></textarea></label>
-<label class="check"><input type="checkbox" name="abandoned" value="1" {% if abandoned %}checked{% endif %}> Abandoned</label>
-<button>Log</button>
-</form>
+<div class="page page-narrow">
+  <div class="page-head">
+    <div>
+      <h1>Log attempt</h1>
+      <p class="log-problem"><span class="ph-num">{{ h.number }}.</span> {{ h.title }} <span class="faint num">· started {{ started }}</span></p>
+    </div>
+    <a class="btn btn-ghost btn-sm" href="/solve">Back to the problem</a>
+  </div>
+
+  {% if abandoned %}
+  <div class="banner" role="note">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16.5v.5"/></svg>
+    You chose to abandon. Log it as abandoned below, or log it as an attempt if you changed your mind.
+  </div>
+  {% endif %}
+
+  <form method="post" action="/log" id="log-form">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <div class="card">
+      <div class="log-row">
+        <div>
+          <label class="label" for="f-min">Minutes</label>
+          <p class="hint">From the server clock. Change it only if the clock ran while you were away.</p>
+        </div>
+        <div class="stepper" data-stepper>
+          <button type="button" data-step="-1" aria-label="One minute less">&minus;</button>
+          <input id="f-min" name="actual_min" type="number" inputmode="numeric" min="0" max="600" value="{{ minutes }}">
+          <button type="button" data-step="1" aria-label="One minute more">+</button>
+        </div>
+      </div>
+      <div class="log-row">
+        <div>
+          <label class="label" for="f-bugs">Bugs</label>
+          <p class="hint">Each separate fix after you first thought it was done.</p>
+        </div>
+        <div class="stepper" data-stepper>
+          <button type="button" data-step="-1" aria-label="One bug less">&minus;</button>
+          <input id="f-bugs" name="bugs" type="number" inputmode="numeric" min="0" max="99" value="0">
+          <button type="button" data-step="1" aria-label="One bug more">+</button>
+        </div>
+      </div>
+      <div class="log-row">
+        <div>
+          <label class="label" for="f-hints">Hints</label>
+          <p class="hint">Any nudge that moved you, including from the coach.</p>
+        </div>
+        <div class="stepper" data-stepper>
+          <button type="button" data-step="-1" aria-label="One hint less">&minus;</button>
+          <input id="f-hints" name="hints" type="number" inputmode="numeric" min="0" max="99" value="0">
+          <button type="button" data-step="1" aria-label="One hint more">+</button>
+        </div>
+      </div>
+      <div class="log-row">
+        <div>
+          <label class="label" for="f-opt">Optimal complexity</label>
+          <p class="hint">Your final solution matches the best known time and space.</p>
+        </div>
+        <label class="switch"><input id="f-opt" type="checkbox" name="optimal" value="yes" checked><span class="track"></span></label>
+      </div>
+      <div class="log-row">
+        <div>
+          <label class="label" for="f-cold">Derived cold</label>
+          <p class="hint">You found the idea yourself, with no hint and no memory of the answer.</p>
+        </div>
+        <label class="switch"><input id="f-cold" type="checkbox" name="derived_cold" value="yes" checked><span class="track"></span></label>
+      </div>
+      <div class="log-row stack">
+        <label class="label" for="f-notes">Notes <span class="faint">(optional)</span></label>
+        <textarea class="textarea" id="f-notes" name="notes" rows="3" placeholder="What went wrong, what you would do first next time."></textarea>
+      </div>
+    </div>
+
+    <div class="log-foot">
+      <div class="grp grp-main">
+        <button class="btn {{ 'btn' if abandoned else 'btn-primary' }} btn-lg" type="submit">Log attempt</button>
+      </div>
+      <div class="grp grp-alt">
+        <button class="btn {{ 'btn-danger-solid' if abandoned else 'btn-danger' }} btn-lg" type="submit" name="abandoned" value="1">Log as abandoned</button>
+      </div>
+    </div>
+  </form>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  document.querySelectorAll("[data-stepper]").forEach(function (s) {
+    var inp = s.querySelector("input");
+    s.addEventListener("click", function (e) {
+      var b = e.target.closest("[data-step]");
+      if (!b) return;
+      var v = (parseInt(inp.value, 10) || 0) + parseInt(b.dataset.step, 10);
+      var max = parseInt(inp.max, 10) || 999;
+      inp.value = Math.max(0, Math.min(max, v));
+      inp.dispatchEvent(new Event("change"));
+    });
+  });
+  var hints = document.getElementById("f-hints"), cold = document.getElementById("f-cold");
+  hints.addEventListener("change", function () { if ((parseInt(hints.value, 10) || 0) > 0 && cold.checked) { cold.checked = false; window.toast("A hint means not derived cold. Switched it off.", "info"); } });
+  document.getElementById("log-form").addEventListener("submit", function (e) {
+    var b = e.submitter;
+    if (b) b.classList.add("busy");
+  });
+})();
+</script>
 {% endblock %}

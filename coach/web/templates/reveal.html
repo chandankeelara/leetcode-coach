@@ -1,16 +1,101 @@
 {% extends "base.html" %}
+{% block title %}{{ r.number }}. {{ r.title }} · Reveal · Coach{% endblock %}
+{% set oc = outcome or a.outcome or "" %}
+{% set ocls = {"clean": "badge-ok", "solved": "badge-warn", "abandoned": "badge-danger"} %}
 {% block body %}
-<h1>{{ r.number }}. {{ r.title }}</h1>
-<dl>
-<dt>Outcome</dt><dd>{{ outcome or "-" }}</dd>
-<dt>Pattern</dt><dd>{{ r.pattern_name or r.pattern or "-" }}</dd>
-<dt>Slot</dt><dd>{{ r.slot or "-" }}</dd>
-<dt>Retry</dt><dd>{{ retry_action or "none" }}</dd>
-</dl>
-<h2>Previous attempts</h2>
-{% if r.previous_attempts %}<table>
-<tr><th>Day</th><th>Min</th><th>Bugs</th><th>Outcome</th></tr>
-{% for a in r.previous_attempts %}<tr><td>{{ a.day }}</td><td>{{ a.actual_min }}</td><td>{{ a.bugs }}</td><td>{{ a.outcome }}</td></tr>{% endfor %}
-</table>{% else %}<p>None.</p>{% endif %}
-<p><a class="btn" href="/dashboard">Dashboard</a> <a class="btn" href="/">Next</a></p>
+<div class="page page-mid">
+  <article class="card rv-card" data-outcome="{{ oc }}">
+    <div class="rv-hero">
+      <div class="rv-top">
+        <span class="badge badge-lg {{ ocls.get(oc, '') }}">{{ oc or "logged" }}</span>
+        {% if r.slot %}<span class="badge plain">{{ r.slot }}</span>{% endif %}
+        {% if r.tier %}<span class="badge plain">tier {{ r.tier }}</span>{% endif %}
+      </div>
+      <div class="rv-title">
+        <span class="ph-num">{{ r.number }}.</span>
+        <h1>{{ r.title }}</h1>
+      </div>
+      <div class="rv-pattern">
+        <span class="eyebrow">It was testing</span>
+        <strong>{{ r.pattern_name or r.pattern or "Unknown" }}</strong>
+      </div>
+    </div>
+
+    {% if a %}
+    {% set ratio = (a.actual_min / a.target_min) if a.target_min else 0 %}
+    <div class="stats">
+      <div class="stat">
+        <span class="eyebrow">Time</span>
+        <span class="stat-v">{{ a.actual_min }}<small>/ {{ a.target_min }} min</small></span>
+        <div class="tvt" role="img" aria-label="{{ a.actual_min }} of {{ a.target_min }} minutes"><i class="{{ 'way' if ratio >= 1.5 else ('over' if ratio > 1 else '') }}" style="width: {{ [100, (ratio / 1.5 * 100)|round(1)]|min }}%"></i><b style="left: calc(66.666% - 1px)"></b></div>
+      </div>
+      <div class="stat">
+        <span class="eyebrow">Bugs</span>
+        <span class="stat-v">{{ a.bugs }}</span>
+        <span class="stat-s">{{ "none" if a.bugs == 0 else ("one fix" if a.bugs == 1 else a.bugs ~ " fixes") }}</span>
+      </div>
+      <div class="stat">
+        <span class="eyebrow">Hints</span>
+        <span class="stat-v">{{ a.hints }}</span>
+        <span class="stat-s">{{ "unaided" if a.hints == 0 else "nudged" }}</span>
+      </div>
+      <div class="stat">
+        <span class="eyebrow">Pace</span>
+        <span class="stat-v">{{ "%.1f"|format(ratio) }}<small>x</small></span>
+        <span class="stat-s">{{ "under target" if ratio <= 1 else ("over target" if ratio < 1.5 else "well over target") }}</span>
+      </div>
+    </div>
+    <div class="flags">
+      <span class="badge {{ 'badge-ok' if a.optimal else 'badge-warn' }}">{{ "optimal" if a.optimal else "not optimal" }}</span>
+      <span class="badge {{ 'badge-ok' if a.derived_cold else 'badge-warn' }}">{{ "derived cold" if a.derived_cold else "not cold" }}</span>
+    </div>
+    {% endif %}
+  </article>
+
+  <div class="rv-grid">
+    <section class="card">
+      <div class="sec-head"><h2>Retry decision</h2></div>
+      <div class="sec-body">
+        {% set st = retry.state if retry else none %}
+        {% if st == "queued" or retry_action in ["added", "bumped"] %}
+        <div class="retry-line"><span class="badge badge-warn">queued</span>
+          <p>In the retry queue{% if retry.attempts %}, attempt {{ retry.attempts }}{% endif %}. It comes back once the wait is over.</p></div>
+        {% elif st == "cleared" or retry_action == "cleared" %}
+        <div class="retry-line"><span class="badge badge-ok">cleared</span><p>Off the retry queue. Clean when it counted.</p></div>
+        {% else %}
+        <div class="retry-line"><span class="badge">none</span><p>Not queued.</p></div>
+        {% endif %}
+        {% if a and a.notes %}
+        <h3 class="eyebrow sub-h">Your notes</h3>
+        <p class="rv-notes">{{ a.notes }}</p>
+        {% endif %}
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="sec-head"><h2>Previous attempts</h2><span class="faint num">{{ r.previous_attempts|length if r.previous_attempts else 0 }}</span></div>
+      <div class="sec-body">
+        {% if r.previous_attempts %}
+        <ol class="timeline">
+          {% for p in r.previous_attempts|reverse %}
+          <li>
+            <span class="tl-dot {{ p.outcome }}"></span>
+            <div><div class="tl-day">{{ p.day }}</div><div class="tl-sub">{{ p.actual_min }} min · {{ p.bugs }} bug{{ "" if p.bugs == 1 else "s" }}</div></div>
+            <span class="badge {{ ocls.get(p.outcome, '') }}">{{ p.outcome }}</span>
+          </li>
+          {% endfor %}
+        </ol>
+        {% else %}
+        <p class="empty">First time on this one.</p>
+        {% endif %}
+      </div>
+    </section>
+  </div>
+
+  <div class="rv-foot">
+    <a class="btn btn-lg" href="/dashboard">Dashboard</a>
+    <a class="btn btn-primary btn-lg" href="/">Next
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+  </div>
+</div>
 {% endblock %}

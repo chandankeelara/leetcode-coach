@@ -53,7 +53,7 @@ def start(c):
 
 def test_login_required(env):
     c, _ = env
-    for path in ["/", "/solve", "/log", "/dashboard", "/messages", "/reveal/1"]:
+    for path in ["/", "/solve", "/log", "/dashboard", "/history", "/messages", "/reveal/1"]:
         r = c.get(path)
         assert r.status_code == 303 and r.headers["location"] == "/login", path
     assert c.post("/solve", data={}).headers["location"] == "/login"
@@ -73,12 +73,19 @@ def test_csrf_enforced(env):
     assert c.post("/solve", data={"csrf": "nope"}).status_code == 403
 
 
+def assert_neutral_nav(html):
+    nav = re.search(r'(?s)<header class="nav">.*?</header>', html).group(0)
+    assert "/history" not in nav and "/dashboard" not in nav
+    assert not re.search(r"\d", visible_text(nav))
+
+
 def test_interstitial_neutral(env):
     c, _ = env
     login(c)
     r = c.get("/")
     assert r.status_code == 200 and "Next problem" in r.text
     assert_clean(r.text)
+    assert_neutral_nav(r.text)
 
 
 def test_solve_page_clean_and_flow(env):
@@ -90,6 +97,9 @@ def test_solve_page_clean_and_flow(env):
     html = c.get("/solve").text
     assert "Two Sum" in html and "leetcode.com" in html and 'target="_blank"' in html
     assert_clean(html)
+    assert_neutral_nav(html)
+    assert "/history" not in html and "/dashboard" not in html
+    assert_clean(c.get("/log").text)
     h = {"X-CSRF-Token": t}
     c.post("/solve/approach", data={"approach": "scan once"}, headers=h)
     c.post("/solve/chat", data={"text": "hi"}, headers=h)
@@ -128,3 +138,47 @@ def test_log_reveal_flow(env):
     assert "prefix-hashmap" in page and 'href="/"' in page and "/dashboard" in page
     assert 'href="/solve"' not in page
     assert c.get("/").text.count("Next problem") == 1
+
+
+def test_history_requires_login(env):
+    c, _ = env
+    r = c.get("/history")
+    assert r.status_code == 303 and r.headers["location"] == "/login"
+
+
+def test_history_page_and_blocked_while_open(env):
+    c, _ = env
+    login(c)
+    r = c.get("/history")
+    assert r.status_code == 200 and "Two Sum" in r.text and "Longest Substring" in r.text
+    r = c.get("/history?outcome=clean")
+    assert "Two Sum" in r.text and "Longest Substring" not in r.text
+    r = c.get("/history?pattern=sliding-window")
+    assert "Longest Substring" in r.text and "Two Sum" not in r.text
+    start(c)
+    r = c.get("/history")
+    assert r.status_code == 303 and r.headers["location"] == "/solve"
+
+
+def test_messages_reports_open_handout(env):
+    c, fake = env
+    login(c)
+    t = start(c)
+    r = c.get("/messages?since=0")
+    assert r.headers["x-open-handout"] == "1"
+    c.post("/log", data={"csrf": t, "actual_min": "5"})
+    assert c.get("/messages?since=0").headers["x-open-handout"] == ""
+
+
+def test_solve_chat_starts_at_handout(env):
+    from datetime import datetime, timedelta
+    c, fake = env
+    login(c)
+    old = (datetime.now() - timedelta(hours=1)).isoformat()
+    fake.msgs.append({"id": 1, "role": "coach", "content": "that one was a sliding window",
+                      "created_at": old})
+    start(c)
+    fake.msgs.append({"id": 2, "role": "coach", "content": "go", "created_at": datetime.now().isoformat()})
+    html = c.get("/solve").text
+    assert "sliding window" not in html and ">go<" in html
+    assert 'data-last="2"' in html

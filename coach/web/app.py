@@ -1,8 +1,10 @@
 """Web UI. RULE ZERO by structure: pages that hand out a problem (/, /solve, /log) never render
 progress; progress (/dashboard) is unreachable while a handout is open."""
+import html
 import os
+import re
 import secrets
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from fastapi import FastAPI, Form, HTTPException, Request
@@ -10,6 +12,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from itsdangerous import BadSignature, URLSafeTimedSerializer
+from markupsafe import Markup
 
 HERE = Path(__file__).parent
 COOKIE = "coach_session"
@@ -39,6 +42,49 @@ def load_secret():
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
 templates = Jinja2Templates(directory=str(HERE / "templates"))
+
+_FENCE = re.compile(r"```[a-zA-Z0-9]*\n?(.*?)```", re.S)
+_TICK = re.compile(r"`([^`\n]+)`")
+_BOLD = re.compile(r"\*\*([^*\n]+)\*\*")
+
+
+def msgfmt(text):
+    """Escape, then a tiny markdown subset: fenced code, inline code, bold."""
+    parts, last = [], 0
+    for m in _FENCE.finditer(text or ""):
+        parts.append(("t", text[last:m.start()]))
+        parts.append(("c", m.group(1)))
+        last = m.end()
+    parts.append(("t", (text or "")[last:]))
+    out = []
+    for kind, chunk in parts:
+        if kind == "c":
+            out.append(f"<pre><code>{html.escape(chunk.rstrip())}</code></pre>")
+            continue
+        t = html.escape(chunk)
+        t = _TICK.sub(r"<code>\1</code>", t)
+        t = _BOLD.sub(r"<strong>\1</strong>", t)
+        out.append(t)
+    return Markup("".join(out))
+
+
+def hhmm(iso):
+    try:
+        return datetime.fromisoformat(str(iso)).strftime("%H:%M")
+    except (TypeError, ValueError):
+        return ""
+
+
+def pname(slug):
+    if not slug:
+        return ""
+    from ..catalog import pattern_name
+    return pattern_name(str(slug))
+
+
+templates.env.filters["msgfmt"] = msgfmt
+templates.env.filters["pname"] = pname
+templates.env.filters["hhmm"] = hhmm
 
 
 def ser():
@@ -90,6 +136,8 @@ async def authed_form(request):
 
 def render(request, name, sess=None, **ctx):
     ctx.setdefault("csrf", sess["csrf"] if sess else "")
+    ctx.setdefault("authed", sess is not None)
+    ctx.setdefault("nav", "neutral")
     return templates.TemplateResponse(request, name, ctx)
 
 
@@ -99,6 +147,17 @@ def go(url):
 
 def frag(text, ok=True):
     return HTMLResponse(f'<span class="{"ok" if ok else "err"}">{text}</span>')
+
+
+def this_handout(m, h):
+    """RULE ZERO: the solve page chat starts at this handout, so talk about the previous
+    problem (its pattern, its reveal) never shows next to a new one."""
+    if m.get("handout_id") is not None:
+        return m["handout_id"] == h.handout_id
+    try:
+        return datetime.fromisoformat(str(m["created_at"])) >= h.started_at - timedelta(seconds=2)
+    except (KeyError, TypeError, ValueError):
+        return True
 
 
 def elapsed_s(h):
@@ -121,7 +180,7 @@ async def login(request: Request, username: str = Form(""), password: str = Form
     uid = service().verify_user(username, password)
     if uid is None:
         return render(request, "login.html", csrf=login_ser().dumps("login"),
-                      error="Wrong username or password.")
+                      error="Wrong username or password.", username=username)
     resp = go("/")
     resp.set_cookie(COOKIE, ser().dumps({"uid": uid, "csrf": secrets.token_hex(16)}),
                     max_age=MAX_AGE, httponly=True, samesite="lax")
@@ -153,8 +212,10 @@ async def solve(request: Request):
         return go("/")
     msgs = service().messages(sess["uid"], 0)
     last = msgs[-1]["id"] if msgs else 0
+    msgs = [m for m in msgs if this_handout(m, h)]
     return render(request, "solve.html", sess, h=h, elapsed=elapsed_s(h),
-                  verdicts=VERDICTS, msgs=msgs, last=last)
+                  started=h.started_at.strftime("%H:%M"), verdicts=VERDICTS, msgs=msgs,
+                  last=last)
 
 
 @app.post("/solve")
@@ -224,8 +285,11 @@ async def messages(request: Request, since: int = 0):
     sess = require(request)
     msgs = service().messages(sess["uid"], since)
     last = msgs[-1]["id"] if msgs else since
-    return templates.TemplateResponse(request, "_messages.html",
-                                      {"msgs": msgs, "last": last, "poll": True})
+    h = service().current_handout(sess["uid"])
+    resp = templates.TemplateResponse(request, "_messages.html", {"msgs": msgs, "last": last})
+    resp.headers["X-Last-Id"] = str(last)
+    resp.headers["X-Open-Handout"] = str(h.handout_id) if h else ""
+    return resp
 
 
 # ---- log and reveal ------------------------------------------------------------------------
@@ -236,7 +300,7 @@ async def log_form(request: Request, abandoned: int = 0):
     if not h:
         return go("/")
     return render(request, "log.html", sess, h=h, minutes=max(1, round(elapsed_s(h) / 60)),
-                  abandoned=bool(abandoned))
+                  abandoned=bool(abandoned), started=h.started_at.strftime("%H:%M"))
 
 
 @app.post("/log")
@@ -267,21 +331,77 @@ async def reveal(request: Request, handout_id: int):
         r = service().reveal(handout_id)
     except Exception:
         return go("/log" if service().current_handout(sess["uid"]) else "/")
-    return render(request, "reveal.html", sess, r=r, outcome=r.get("outcome"),
-                  retry_action=r.get("retry_action"))
+    return render(request, "reveal.html", sess, nav="full", r=r, outcome=r.get("outcome"),
+                  retry_action=r.get("retry_action"), a=r.get("attempt") or {},
+                  retry=r.get("retry_state") or {})
 
 
 # ---- dashboard -----------------------------------------------------------------------------
-@app.get("/dashboard", response_class=HTMLResponse)
-async def dashboard(request: Request):
-    sess = require(request)
+def blocked_while_open(sess):
     if service().current_handout(sess["uid"]):
         resp = go("/solve")
         resp.set_cookie(FLASH, "log_first", max_age=60, httponly=True, samesite="lax")
         return resp
+    return None
+
+
+def history_rows(uid):
+    f = getattr(service(), "history", None)
+    if f is None:
+        return None
+    try:
+        return f(uid)
+    except Exception:
+        return None
+
+
+def heat14(rows, last14):
+    today = date.today()
+    days = [today - timedelta(days=13 - i) for i in range(14)]
+    if rows is not None:
+        counts = {}
+        for r in rows:
+            counts[r["day"]] = counts.get(r["day"], 0) + 1
+        vals = [counts.get(d.isoformat(), 0) for d in days]
+    else:
+        marks = list(last14) if isinstance(last14, (list, str)) else []
+        vals = [1 if (m == "#" or m is True or m == 1) else 0 for m in marks[-14:]]
+        vals = [0] * (14 - len(vals)) + vals
+    return [{"day": d.isoformat(), "dow": "MTWTFSS"[d.weekday()], "dom": d.day, "n": n,
+             "today": d == today} for d, n in zip(days, vals)]
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+async def dashboard(request: Request):
+    sess = require(request)
+    blocked = blocked_while_open(sess)
+    if blocked:
+        return blocked
     st = service().status(sess["uid"])
     rep = service().report(sess["uid"], REPORT_DATE)
-    return render(request, "dashboard.html", sess, st=st, rep=rep, report_date=REPORT_DATE)
+    rows = history_rows(sess["uid"])
+    heat = heat14(rows, (st.get("streak") or {}).get("last14", ""))
+    return render(request, "dashboard.html", sess, nav="full", active="dashboard", st=st,
+                  rep=rep, report_date=REPORT_DATE, heat=heat,
+                  heat_max=max([c["n"] for c in heat] + [1]))
+
+
+@app.get("/history", response_class=HTMLResponse)
+async def history(request: Request, pattern: str = "", outcome: str = ""):
+    sess = require(request)
+    blocked = blocked_while_open(sess)
+    if blocked:
+        return blocked
+    rows = history_rows(sess["uid"]) or []
+    patterns = sorted({(r["pattern"], r["pattern_name"] or r["pattern"]) for r in rows
+                       if r.get("pattern")}, key=lambda p: p[1])
+    shown = [r for r in rows if (not pattern or r.get("pattern") == pattern)
+             and (not outcome or r.get("outcome") == outcome)]
+    totals = {k: sum(1 for r in shown if r.get("outcome") == k)
+              for k in ("clean", "solved", "abandoned")}
+    return render(request, "history.html", sess, nav="full", active="history", rows=shown,
+                  total=len(rows), patterns=patterns, pattern=pattern, outcome=outcome,
+                  totals=totals)
 
 
 @app.middleware("http")

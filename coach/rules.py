@@ -295,7 +295,8 @@ def projection(rows, today, horizon_days, clean_to_own=CLEAN_TO_OWN):
 def report_card(rows, today, horizon_days):
     """Everything report.py prints, as one dict."""
     rows = sorted(rows, key=lambda r: _g(r, "day"))
-    if not rows:
+    # No completed problem yet -> no pace -> nothing to project (report.py would divide by 0).
+    if not any(_g(r, "outcome") != "abandoned" for r in rows):
         return {}
     return {
         "today": today.isoformat(), "horizon_days": horizon_days,

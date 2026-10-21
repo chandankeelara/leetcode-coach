@@ -37,7 +37,74 @@ class Svc:
         r = dict(_s.reveal(handout_id))
         if "previous_attempts" not in r:
             r["previous_attempts"] = self._previous(r.get("number"), handout_id)
+        if "attempt" not in r:
+            r["attempt"] = self._attempt(handout_id)
+        a = r.get("attempt") or {}
+        r.setdefault("outcome", a.get("outcome"))
+        if "retry_state" not in r:
+            r["retry_state"] = self._retry_state(r.get("number"), a, handout_id)
         return r
+
+    @staticmethod
+    def _attempt(handout_id):
+        try:
+            from sqlalchemy import select
+            from ..db import session_scope
+            from ..models import Attempt
+            with session_scope() as s:
+                a = s.scalars(select(Attempt).where(Attempt.handout_id == handout_id)
+                              .order_by(Attempt.id.desc())).first()
+                if a is None:
+                    return None
+                return {"day": str(a.day), "target_min": a.target_min, "actual_min": a.actual_min,
+                        "bugs": a.bugs, "hints": a.hints, "optimal": a.optimal,
+                        "derived_cold": a.derived_cold, "outcome": a.outcome, "notes": a.notes}
+        except Exception:
+            return None
+
+    @staticmethod
+    def _retry_state(number, attempt, attempt_handout_id=None):
+        try:
+            from sqlalchemy import select
+            from ..db import session_scope
+            from ..models import RetryItem
+            with session_scope() as s:
+                uid = _handout_user(s, attempt_handout_id) if attempt_handout_id else None
+                q = select(RetryItem).where(RetryItem.problem_number == number)
+                if uid is not None:
+                    q = q.where(RetryItem.user_id == uid)
+                it = s.scalars(q.order_by(RetryItem.id.desc())).first()
+                if it is None:
+                    return {"state": "none"}
+                if it.cleared_on is None:
+                    return {"state": "queued", "attempts": it.attempts, "reason": it.reason}
+                if attempt and str(it.cleared_on) == attempt.get("day"):
+                    return {"state": "cleared"}
+                return {"state": "none"}
+        except Exception:
+            return None
+
+    def history(self, user_id):
+        from sqlalchemy import select
+        from ..catalog import pattern_name
+        from ..db import session_scope
+        from ..models import Attempt, Problem
+        with session_scope() as s:
+            rows = s.execute(select(Attempt, Problem.title, Problem.pattern_slug)
+                             .join(Problem, Problem.number == Attempt.problem_number)
+                             .where(Attempt.user_id == user_id)
+                             .order_by(Attempt.day.desc(), Attempt.id.desc())).all()
+            out = []
+            for a, title, p_slug in rows:
+                slug = a.pattern_slug or p_slug
+                out.append({"id": a.id, "day": str(a.day), "number": a.problem_number,
+                            "title": title, "pattern": slug,
+                            "pattern_name": pattern_name(slug) if slug else None,
+                            "target_min": a.target_min, "actual_min": a.actual_min,
+                            "bugs": a.bugs, "hints": a.hints, "optimal": a.optimal,
+                            "derived_cold": a.derived_cold, "outcome": a.outcome,
+                            "notes": a.notes, "source": a.source})
+            return out
 
     @staticmethod
     def _previous(number, handout_id):
@@ -46,7 +113,10 @@ class Svc:
             from ..db import session_scope
             from ..models import Attempt
             with session_scope() as s:
-                rows = s.scalars(select(Attempt).where(Attempt.problem_number == number)
+                # Only this user's history: the handout tells us whose it is.
+                uid = _handout_user(s, handout_id)
+                rows = s.scalars(select(Attempt).where(Attempt.problem_number == number,
+                                                       Attempt.user_id == uid)
                                  .order_by(Attempt.day, Attempt.id)).all()
                 return [{"day": str(a.day), "actual_min": a.actual_min, "bugs": a.bugs,
                          "outcome": a.outcome} for a in rows if a.handout_id != handout_id]
@@ -84,3 +154,10 @@ class Svc:
     def lint(self, src):
         from ..lint import lint
         return lint(src)
+
+
+def _handout_user(s, handout_id):
+    """Whose handout is this? Used to scope reveal lookups to one user."""
+    from ..models import Handout
+    h = s.get(Handout, handout_id)
+    return h.user_id if h else None

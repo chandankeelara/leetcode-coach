@@ -1,2 +1,16 @@
-<span class="ok">Submitted.</span>
-{% if found %}<ul class="lint">{% for f in found %}<li>line {{ f.line }}: {{ f.kind }} {{ f.msg }}</li>{% endfor %}</ul>{% else %}<span class="ok"> Lint clean.</span>{% endif %}
+<div class="lint-head">
+  <span class="badge badge-accent">Submitted</span>
+  {% if found %}<span><strong>{{ found|length }}</strong> lint finding{{ "" if found|length == 1 else "s" }}. The coach sees these too.</span>
+  {% else %}<span class="badge badge-ok">Lint clean</span>{% endif %}
+</div>
+{% if found %}
+<ul class="lint-list" data-lint>
+  {% for f in found %}
+  <li><button class="lint-item" type="button" data-line="{{ f.line }}">
+    <span class="lint-ln">line {{ f.line }}</span>
+    <span class="badge lint-kind k-{{ f.kind }}">{{ f.kind }}</span>
+    <span class="lint-msg">{{ f.msg|msgfmt }}</span>
+  </button></li>
+  {% endfor %}
+</ul>
+{% endif %}

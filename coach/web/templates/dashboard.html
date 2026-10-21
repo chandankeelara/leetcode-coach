@@ -1,32 +1,271 @@
 {% extends "base.html" %}
-{% macro tree(d) %}
-{% if d is mapping %}<dl>{% for k, v in d.items() %}<dt>{{ k }}</dt><dd>{{ tree(v) }}</dd>{% endfor %}</dl>
-{% elif d is iterable and d is not string %}<ul>{% for v in d %}<li>{{ tree(v) }}</li>{% endfor %}</ul>
-{% elif d is float %}{{ "%.2f"|format(d) }}{% else %}{{ d }}{% endif %}
-{% endmacro %}
+{% block title %}Dashboard · Coach{% endblock %}
+{% macro n(v, d=1, suffix="") %}{% if v is number %}{{ ("%." ~ d ~ "f")|format(v) if v is float else v }}{{ suffix }}{% else %}-{% endif %}{% endmacro %}
+{% macro pct(v) %}{% if v is number %}{{ (v * 100)|round|int }}%{% else %}-{% endif %}{% endmacro %}
+{% macro lvl(level) %}{% set l = level if level is number else 0 %}<span class="lvl {{ 'low' if l <= 1 else ('mid' if l <= 3 else 'high') }}" role="img" aria-label="level {{ l }} of 5">{% for i in range(5) %}<i class="{{ 'on' if i < l else '' }}"></i>{% endfor %}<b>L{{ l }}</b></span>{% endmacro %}
 {% block body %}
-<h1>Dashboard</h1>
-{% set b = st.backlog %}
-<h2>Backlog</h2>
-<p>{{ b.backlog }} owed. Today: {{ b.done_today }} / {{ b.target_today }}, {{ b.remaining }} left.</p>
-<h2>Streak</h2>
-<p>{{ st.streak.current }} now, {{ st.streak.longest }} best.</p>
-<div class="bars">{% for d in st.streak.last14 %}<i class="{{ 'on' if d else '' }}"></i>{% endfor %}</div>
-<h2>Tier-1</h2>
-{% for t in st.tier1 %}{% set need = t.need or t.needed or 3 %}
-<div class="bar"><span>{{ t.pattern }}</span><meter min="0" max="{{ need }}" value="{{ t.clean }}"></meter> {{ t.clean }}/{{ need }} {{ t.tag or t.status or "" }}</div>
-{% endfor %}
-{% if st.tier2_open %}<p>Tier-2 open: {{ st.tier2_open|join(", ") }}</p>{% endif %}
-<h2>Retry due</h2>
-{% for r in st.retry_due %}{% if r.due %}<p>{{ r.number or r.problem_number }} {{ r.title }} (age {{ r.age }}, wait {{ r.wait }})</p>{% endif %}{% else %}<p>None.</p>{% endfor %}
-<h2>Re-fire due</h2>
-{% for r in st.refire_due %}{% if r.due is not defined or r.due %}<p>{{ r.pattern or r }}</p>{% endif %}{% else %}<p>None.</p>{% endfor %}
-<h2>Weakest</h2>
-{% for w in st.weakest %}<p>{{ w.name }} L{{ w.level }} {{ w.trend or "" }}</p>{% endfor %}
-<h2>Strengths</h2>
-{% for w in st.strengths %}<p>{{ w.name }} L{{ w.level }} {{ w.trend or "" }}</p>{% else %}<p>None yet.</p>{% endfor %}
-{% if st.clean_rate is not none %}<p>Clean rate: {{ st.clean_rate }}</p>{% endif %}
-<h2>Report card, {{ report_date }}</h2>
-{{ tree(rep) }}
-<p><a class="btn" href="/">Next</a></p>
+{% set b = st.backlog or {} %}
+{% set sk = st.streak or {} %}
+<div class="page">
+  <div class="page-head">
+    <div>
+      <h1>Dashboard</h1>
+      <p class="sub">{{ st.today or "" }}</p>
+    </div>
+    <a class="btn btn-primary" href="/">Next
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+  </div>
+
+  <div class="kpis">
+    <section class="card kpi {{ 'hot' if (b.backlog or 0) > 0 else 'good' }}">
+      <span class="eyebrow">Backlog</span>
+      <span class="kpi-v">{{ b.backlog if b.backlog is number else "-" }}<small>owed</small></span>
+      <span class="kpi-s">{% if b.start %}Counting from {{ b.start }}{% if b.days %}, {{ b.days }} days{% endif %}{% else %}Problems owed so far{% endif %}</span>
+    </section>
+    <section class="card kpi">
+      <span class="eyebrow">Today</span>
+      <span class="kpi-v">{{ b.done_today if b.done_today is number else 0 }}<small>/ {{ b.target_today if b.target_today is number else "-" }}</small></span>
+      {% set tgt = b.target_today if b.target_today else 0 %}
+      <div class="kpi-bar" role="img" aria-label="{{ b.done_today or 0 }} of {{ tgt }} done"><i style="width: {{ ([100, ((b.done_today or 0) / tgt * 100)]|min) if tgt else 0 }}%"></i></div>
+      <span class="kpi-s">{{ b.remaining if b.remaining is number else "-" }} left today</span>
+    </section>
+    <section class="card kpi">
+      <span class="eyebrow">Streak</span>
+      <span class="kpi-v">{{ sk.current if sk.current is number else 0 }}<small>day{{ "" if sk.current == 1 else "s" }}</small></span>
+      <span class="kpi-s">Longest {{ sk.longest if sk.longest is number else 0 }}</span>
+    </section>
+    <section class="card kpi">
+      <span class="eyebrow">Clean rate</span>
+      <span class="kpi-v">{{ pct(st.clean_rate) }}</span>
+      <span class="kpi-s">Share of attempts solved clean</span>
+    </section>
+  </div>
+
+  <section class="card heat-card">
+    <div class="sec-head">
+      <h2>Last 14 days</h2>
+      <div class="heat-legend" aria-hidden="true">0 <i></i><i data-l="1"></i><i data-l="2"></i><i data-l="3"></i> 3+</div>
+    </div>
+    <div class="sec-body">
+      <div class="heat" role="list">
+        {% for c in heat %}
+        <div class="heat-cell{{ ' today' if c.today else '' }}" role="listitem" title="{{ c.day }}: {{ c.n }} attempt{{ '' if c.n == 1 else 's' }}">
+          <span class="heat-box" data-l="{{ [c.n, 3]|min }}"><span class="sr-only">{{ c.day }}: </span>{{ c.n if c.n else "" }}</span>
+          <span class="heat-lbl">{{ c.dow }}</span>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </section>
+
+  <div class="dash-grid">
+    <div class="dash-col">
+      <section class="card">
+        <div class="sec-head"><h2>Tier-1 patterns</h2><span class="faint" style="font-size:12.5px">clean solves to own</span></div>
+        <div class="sec-body">
+          {% if st.tier1 %}
+          <div class="bars">
+            {% for t in st.tier1 %}
+            {% if t.need is defined and t.need %}{% set total = t.need %}{% elif t.needed is defined %}{% set total = (t.clean or 0) + (t.needed or 0) %}{% else %}{% set total = 3 %}{% endif %}
+            {% set total = total if total > 0 else 3 %}
+            {% set owned = (t.status == "owned") or (t.clean or 0) >= total %}
+            <div class="bar-row">
+              <span class="bar-name" title="{{ t.pattern|pname }}">{{ t.pattern|pname }}</span>
+              <span class="pips{{ ' owned' if owned else '' }}" style="--n: {{ total }}" role="img" aria-label="{{ t.clean or 0 }} of {{ total }} clean">{% for i in range(total) %}<i class="{{ 'on' if i < (t.clean or 0) else '' }}"></i>{% endfor %}</span>
+              <span class="bar-tag{{ ' owned' if owned else '' }}">{{ "owned" if owned else (t.status or t.tag or ((t.clean or 0) ~ "/" ~ total)) }}</span>
+            </div>
+            {% endfor %}
+          </div>
+          {% else %}<p class="empty">No pattern data yet.</p>{% endif %}
+
+          {% set t2 = (st.tiers.tier2 if st.tiers is defined and st.tiers and st.tiers.tier2 else none) %}
+          {% if t2 or st.tier2_open %}
+          <h3 class="eyebrow sub-h">Tier-2</h3>
+          <div class="chips">
+            {% if t2 %}
+              {% for t in t2 %}
+              {% set total = (t.clean or 0) + (t.needed or 0) %}{% set total = total if total > 0 else 3 %}
+              <span class="chip{{ ' owned' if t.status == 'owned' else (' untouched' if not t.tried else '') }}" title="{{ t.status }}">{{ t.pattern|pname }}<span class="mini" aria-label="{{ t.clean or 0 }} of {{ total }} clean">{% for i in range(total) %}<i class="{{ 'on' if i < (t.clean or 0) else '' }}"></i>{% endfor %}</span></span>
+              {% endfor %}
+            {% else %}
+              {% for p in st.tier2_open %}<span class="chip">{{ p|pname }}</span>{% endfor %}
+            {% endif %}
+          </div>
+          {% endif %}
+        </div>
+      </section>
+
+      <section class="card">
+        {% set due_n = (st.retry_due or [])|selectattr("due")|list|length %}
+        <div class="sec-head"><h2>Retry queue</h2>{% if due_n %}<span class="badge badge-warn">{{ due_n }} due</span>{% endif %}</div>
+        <div class="sec-body">
+          {% if st.retry_due %}
+          <table class="tbl retry">
+            <thead><tr><th>Problem</th><th class="r">Tries</th><th class="r c-age">Age</th><th class="r">Status</th></tr></thead>
+            <tbody>
+            {% for r in st.retry_due|sort(attribute="due", reverse=true) %}
+              <tr>
+                <td><span class="p-num">{{ r.problem_number or r.number }}</span>{{ r.title }}{% if r.reason %}<div class="why" title="{{ r.reason }}">{{ r.reason }}</div>{% endif %}</td>
+                <td class="r num">{{ r.attempts if r.attempts is defined else "-" }}</td>
+                <td class="r num c-age">{{ r.age }}d</td>
+                <td class="r">{% if r.due %}<span class="badge badge-warn">due</span>{% elif r.wait is number and r.age is number %}<span class="badge plain lc">in {{ [r.wait - r.age, 1]|max }}d</span>{% else %}<span class="badge plain">waiting</span>{% endif %}</td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+          {% else %}<p class="empty">Queue is empty.</p>{% endif %}
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="sec-head"><h2>Re-fire due</h2></div>
+        <div class="sec-body">
+          {% set rf = (st.refire_due or [])|list %}
+          {% if rf %}
+          <table class="tbl">
+            <thead><tr><th>Pattern</th><th class="r">Since</th><th class="r">Done</th><th class="r">Status</th></tr></thead>
+            <tbody>
+            {% for r in rf %}
+              {% if r is mapping %}
+              <tr>
+                <td>{{ r.pattern|pname }}</td>
+                <td class="r num">{{ r.age }}d</td>
+                <td class="r num">{{ r.refires_done if r.refires_done is defined else "-" }}</td>
+                <td class="r">{% if r.due is not defined or r.due %}<span class="badge badge-warn">due</span>{% else %}<span class="badge plain">later</span>{% endif %}</td>
+              </tr>
+              {% else %}
+              <tr><td>{{ r|pname }}</td><td class="r">-</td><td class="r">-</td><td class="r"><span class="badge badge-warn">due</span></td></tr>
+              {% endif %}
+            {% endfor %}
+            </tbody>
+          </table>
+          {% else %}<p class="empty">Nothing to re-fire.</p>{% endif %}
+        </div>
+      </section>
+    </div>
+
+    <div class="dash-col">
+      <section class="card">
+        <div class="sec-head"><h2>Weakest skills</h2></div>
+        <div class="sec-body">
+          {% if st.weakest %}
+          <ul class="skills">
+            {% for w in st.weakest %}
+            <li class="skill">
+              <span class="skill-name">{{ w.name }}{% if w.trend %}<span class="badge plain{{ ' badge-danger' if w.trend|upper in ['BLOCKER', 'GAP'] else '' }}">{{ w.trend }}</span>{% endif %}</span>
+              {{ lvl(w.level) }}
+              {% if w.evidence %}<span class="skill-ev" title="{{ w.evidence }}">{{ w.evidence }}</span>{% endif %}
+            </li>
+            {% endfor %}
+          </ul>
+          {% else %}<p class="empty">No skills tracked yet.</p>{% endif %}
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="sec-head"><h2>Strengths</h2><span class="faint" style="font-size:12.5px">level 4+</span></div>
+        <div class="sec-body">
+          {% if st.strengths %}
+          <ul class="skills">
+            {% for w in st.strengths %}
+            <li class="skill">
+              <span class="skill-name">{{ w.name }}{% if w.trend %}<span class="badge plain{{ ' badge-ok' if w.trend|lower in ['retired', 'rising', 'recovered'] else '' }}">{{ w.trend }}</span>{% endif %}</span>
+              {{ lvl(w.level) }}
+              {% if w.evidence %}<span class="skill-ev" title="{{ w.evidence }}">{{ w.evidence }}</span>{% endif %}
+            </li>
+            {% endfor %}
+          </ul>
+          {% else %}<p class="empty">None yet.</p>{% endif %}
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <section class="card rc">
+    <div class="sec-head">
+      <h2>Report card</h2>
+      <span class="faint num" style="font-size:12.5px">horizon {{ report_date }}{% if rep.horizon_days %} · {{ rep.horizon_days }} days{% endif %}</span>
+    </div>
+    {% if rep %}
+    {% set tp = rep.throughput or {} %}{% set q = rep.quality or {} %}{% set cv = rep.coverage or {} %}{% set pj = rep.projection or {} %}
+    <div class="rc-grid">
+      <div class="rc-sec">
+        <h3>Throughput</h3>
+        <span class="rc-big">{{ tp.completed if tp.completed is number else "-" }}<small class="faint" style="font-size:13px"> solved</small></span>
+        <dl class="dl">
+          {% if tp.abandoned is defined %}<dt>Abandoned</dt><dd>{{ tp.abandoned }}</dd>{% endif %}
+          {% if tp.active is defined %}<dt>Active days</dt><dd>{{ tp.active }} / {{ tp.elapsed }}</dd>{% endif %}
+          {% if tp.consistency is defined %}<dt>Consistency</dt><dd>{{ pct(tp.consistency) }}</dd>{% endif %}
+          {% if tp.rate_calendar is defined %}<dt>Per calendar day</dt><dd>{{ n(tp.rate_calendar, 2) }}</dd>{% endif %}
+          {% if tp.rate_active is defined %}<dt>Per active day</dt><dd>{{ n(tp.rate_active, 2) }}</dd>{% endif %}
+          {% if tp.first is defined %}<dt>Since</dt><dd>{{ tp.first }}</dd>{% endif %}
+        </dl>
+      </div>
+      <div class="rc-sec">
+        <h3>Quality</h3>
+        {% if q.first6_bugs is defined %}
+        <span class="rc-big">{{ n(q.last6_bugs, 2) }}<small class="faint" style="font-size:13px"> bugs/solve</small></span>
+        <dl class="dl">
+          <dt>First 6 blocks</dt><dd>{{ n(q.first6_bugs, 2) }}</dd>
+          <dt>Last 6 blocks</dt><dd>{{ n(q.last6_bugs, 2) }}</dd>
+          {% if q.last6_bugs is number and q.first6_bugs is number %}<dt>Change</dt><dd style="color: var({{ '--ok' if q.last6_bugs < q.first6_bugs else '--warn' }})">{{ "%+.2f"|format(q.last6_bugs - q.first6_bugs) }}</dd>{% endif %}
+        </dl>
+        {% else %}<p class="empty">Not enough blocks yet.</p>{% endif %}
+      </div>
+      <div class="rc-sec">
+        <h3>Coverage</h3>
+        {% if cv.total is defined %}
+        <span class="rc-big">{{ (cv.owned or [])|length }}<small class="faint" style="font-size:13px"> / {{ cv.total }} owned</small></span>
+        <dl class="dl">
+          <dt>Started</dt><dd>{{ (cv.started or [])|length }}</dd>
+          <dt>Untouched</dt><dd>{{ (cv.untouched or [])|length }}</dd>
+        </dl>
+        {% if cv.untouched %}<div class="chips">{% for p in cv.untouched %}<span class="chip untouched">{{ p|pname }}</span>{% endfor %}</div>{% endif %}
+        {% else %}<p class="empty">No coverage yet.</p>{% endif %}
+      </div>
+      <div class="rc-sec">
+        <h3>Projection</h3>
+        {% if pj.ready_around is defined %}
+        <span class="rc-big">{{ pj.ready_around }}</span>
+        <span class="faint" style="font-size:12.5px">ready around, at the current pace</span>
+        <dl class="dl">
+          {% if pj.cal_rate is defined %}<dt>Pace now</dt><dd>{{ n(pj.cal_rate, 2) }}/day</dd>{% endif %}
+          {% if pj.need_rate is defined %}<dt>Pace needed</dt><dd>{{ n(pj.need_rate, 2) }}/day</dd>{% endif %}
+          {% if pj.problems_to_attempt is defined %}<dt>Still to attempt</dt><dd>{{ pj.problems_to_attempt }}</dd>{% endif %}
+          {% if pj.tier1_ready %}{% for k, v in pj.tier1_ready.items() %}<dt>Tier-1 at {{ k }}</dt><dd>{{ v }}</dd>{% endfor %}{% endif %}
+        </dl>
+        {% else %}<p class="empty">Not enough data.</p>{% endif %}
+      </div>
+    </div>
+    {% if q.blocks %}
+    {% set blocks = q.blocks %}
+    {% set ns = namespace(mx=1.5) %}
+    {% for bl in blocks %}{% if bl.time_vs_target is number and bl.time_vs_target > ns.mx %}{% set ns.mx = bl.time_vs_target %}{% endif %}{% if bl.bugs_per_solve is number and bl.bugs_per_solve > ns.mx %}{% set ns.mx = bl.bugs_per_solve %}{% endif %}{% endfor %}
+    <div class="rc-blocks">
+      <div class="sec-head" style="padding:0">
+        <h3 style="font-size:13px;color:var(--text-2)">Every {{ blocks[0].solves or 4 }} solves</h3>
+        <div class="legend"><span><i style="background:var(--accent)"></i>time / target</span><span><i style="background:var(--warn)"></i>bugs per solve</span></div>
+      </div>
+      <div class="qchart" style="--n: {{ blocks|length }}" role="img" aria-label="Time versus target and bugs per solve for each block of solves">
+        <div class="ref" style="bottom: {{ (1 / ns.mx * 100)|round(1) }}%"><span>1.0</span></div>
+        {% for bl in blocks %}
+        <div class="qcol" title="{{ bl.span }}: time {{ n(bl.time_vs_target, 2) }}x, bugs {{ n(bl.bugs_per_solve, 2) }}, clean {{ bl.clean }}/{{ bl.solves }}">
+          <i class="t" style="height: {{ ((bl.time_vs_target or 0) / ns.mx * 100)|round(1) }}%"></i>
+          <i class="b" style="height: {{ ((bl.bugs_per_solve or 0) / ns.mx * 100)|round(1) }}%"></i>
+        </div>
+        {% endfor %}
+      </div>
+      <div class="qlabels" style="--n: {{ blocks|length }}">{% for bl in blocks %}<span>{{ (bl.span or "")[:5] }}</span>{% endfor %}</div>
+    </div>
+    {% endif %}
+    {% else %}
+    <div class="empty empty-lg"><p>No attempts yet. The report fills in after the first log.</p></div>
+    {% endif %}
+  </section>
+
+  <div class="dash-foot">
+    <a class="btn btn-primary btn-lg" href="/">Next
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+  </div>
+</div>
 {% endblock %}

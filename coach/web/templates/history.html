@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}History · Coach{% endblock %}
+{% set ocls = {"clean": "badge-ok", "solved": "badge-warn", "abandoned": "badge-danger"} %}
+{% block body %}
+<div class="page">
+  <div class="page-head">
+    <div>
+      <h1>History</h1>
+      <p class="sub">Every logged attempt, newest first.</p>
+    </div>
+  </div>
+
+  <section class="card">
+    <form class="filters" method="get" action="/history" id="filters">
+      <label class="sr-only" for="f-pattern">Pattern</label>
+      <select class="select" id="f-pattern" name="pattern">
+        <option value="">All patterns</option>
+        {% for slug, name in patterns %}<option value="{{ slug }}" {% if slug == pattern %}selected{% endif %}>{{ name }}</option>{% endfor %}
+      </select>
+      <fieldset class="seg" aria-label="Outcome">
+        {% for val, lbl in [("", "All"), ("clean", "Clean"), ("solved", "Solved"), ("abandoned", "Abandoned")] %}
+        <input type="radio" name="outcome" id="o{{ loop.index }}" value="{{ val }}" {% if val == outcome %}checked{% endif %}>
+        <label for="o{{ loop.index }}">{{ lbl }}</label>
+        {% endfor %}
+      </fieldset>
+      <noscript><button class="btn btn-sm" type="submit">Filter</button></noscript>
+      <span class="tally num">{{ rows|length }}{% if rows|length != total %} of {{ total }}{% endif %} · <span style="color:var(--ok)">{{ totals.clean }} clean</span> · <span style="color:var(--warn)">{{ totals.solved }} solved</span> · <span style="color:var(--danger)">{{ totals.abandoned }} abandoned</span></span>
+    </form>
+
+    {% if rows %}
+    <div class="hist-wrap">
+      <table class="tbl hist">
+        <thead><tr><th>Date</th><th>Problem</th><th>Pattern</th><th>Time</th><th class="r">Bugs</th><th class="r">Outcome</th></tr></thead>
+        <tbody>
+        {% for r in rows %}
+          {% set ratio = (r.actual_min / r.target_min) if r.target_min else 0 %}
+          <tr>
+            <td class="c-day">{{ r.day }}</td>
+            <td class="c-prob"><span class="p-num">{{ r.number }}</span><span class="p-title">{{ r.title }}</span>{% if r.source == "import" %}<span class="src" title="Imported from the old repo">import</span>{% endif %}</td>
+            <td class="c-pat muted">{{ r.pattern_name or r.pattern or "-" }}</td>
+            <td class="tvt-cell">
+              <span class="tvt-txt {{ 'way' if ratio >= 1.5 else ('over' if ratio > 1 else '') }}">{{ r.actual_min }} / {{ r.target_min }} min</span>
+              <div class="tvt" aria-hidden="true"><i class="{{ 'way' if ratio >= 1.5 else ('over' if ratio > 1 else '') }}" style="width: {{ [100, (ratio / 1.5 * 100)|round(1)]|min }}%"></i><b style="left: calc(66.666% - 1px)"></b></div>
+            </td>
+            <td class="r num c-bugs">{{ r.bugs }}</td>
+            <td class="r c-out"><span class="badge {{ ocls.get(r.outcome, '') }}">{{ r.outcome }}</span></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% elif total %}
+    <div class="empty empty-lg"><p>Nothing matches these filters.</p><a class="btn btn-sm" href="/history">Clear filters</a></div>
+    {% else %}
+    <div class="empty empty-lg"><p>No attempts logged yet.</p></div>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  var f = document.getElementById("filters");
+  f.addEventListener("change", function () {
+    var p = new URLSearchParams(new FormData(f));
+    ["pattern", "outcome"].forEach(function (k) { if (!p.get(k)) p.delete(k); });
+    var qs = p.toString();
+    location.href = "/history" + (qs ? "?" + qs : "");
+  });
+})();
+</script>
+{% endblock %}

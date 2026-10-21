@@ -1,2 +1,2 @@
-{% for m in msgs %}<div class="msg {{ m.role }}"><b>{{ m.role }}</b> {{ m.content }}</div>{% endfor %}
-{% if poll %}<div id="poll" hx-get="/messages?since={{ last }}" hx-trigger="every 2s" hx-target="#poll" hx-swap="outerHTML" style="display:none"></div>{% endif %}
+{% for m in msgs %}{% set prev = loop.previtem if loop.previtem is defined else none %}<div class="msg {{ m.role }}{% if prev and prev.role == m.role %} cont{% endif %}" data-id="{{ m.id }}" data-role="{{ m.role }}">{% if m.role != "system" %}<div class="msg-meta"><span class="msg-who">{{ "Coach" if m.role == "coach" else "You" }}</span>{% if m.created_at %}<time class="msg-time" datetime="{{ m.created_at }}">{{ m.created_at|hhmm }}</time>{% endif %}</div>{% endif %}<div class="msg-body">{{ m.content|msgfmt }}</div></div>
+{% endfor %}

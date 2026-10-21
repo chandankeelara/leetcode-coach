@@ -58,5 +58,15 @@ class FakeService:
     def report(self, uid, target_date):
         return {"throughput": {"completed": 3}}
 
+    def history(self, uid):
+        return [{"id": 1, "day": "2026-10-20", "number": 1, "title": "Two Sum",
+                 "pattern": "prefix-hashmap", "pattern_name": "Prefix Hashmap", "target_min": 15,
+                 "actual_min": 12, "bugs": 0, "hints": 0, "optimal": True, "derived_cold": True,
+                 "outcome": "clean", "notes": "", "source": "app"},
+                {"id": 2, "day": "2026-10-19", "number": 3, "title": "Longest Substring",
+                 "pattern": "sliding-window", "pattern_name": "Sliding Window", "target_min": 15,
+                 "actual_min": 30, "bugs": 2, "hints": 1, "optimal": True, "derived_cold": False,
+                 "outcome": "solved", "notes": "", "source": "app"}]
+
     def lint(self, src):
         return [(1, "COST", "x")] if "bad" in src else []
