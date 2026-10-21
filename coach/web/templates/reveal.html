@@ -28,6 +28,16 @@
         <span class="eyebrow">Time</span>
         <span class="stat-v">{{ a.actual_min }}<small>/ {{ a.target_min }} min</small></span>
         <div class="tvt" role="img" aria-label="{{ a.actual_min }} of {{ a.target_min }} minutes"><i class="{{ 'way' if ratio >= 1.5 else ('over' if ratio > 1 else '') }}" style="width: {{ [100, (ratio / 1.5 * 100)|round(1)]|min }}%"></i><b style="left: calc(66.666% - 1px)"></b></div>
+        {% set ck = r.clock or {} %}
+        {% if ck %}
+        <span class="stat-s rv-clock" id="rv-clock">{{ ck.coach_min }} min on the coach's clock, {{ ck.wall_min }} min wall</span>
+        {% if ck.pauses or ck.resets %}
+        <ul class="rv-clock-log">
+          {% for p in ck.pauses %}<li>Paused {{ p.minutes }} min{% if p.reason %}: {{ p.reason }}{% endif %}</li>{% endfor %}
+          {% for x in ck.resets %}<li>Reset{% if x.at %} at {{ x.at[11:16] }}{% endif %}{% if x.reason %}: {{ x.reason }}{% endif %}</li>{% endfor %}
+        </ul>
+        {% endif %}
+        {% endif %}
       </div>
       <div class="stat">
         <span class="eyebrow">Bugs</span>

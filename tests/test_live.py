@@ -220,14 +220,15 @@ def test_handout_state(web):
     c, uid = web
     assert c.get("/handout/state").json() == {
         "open_handout_id": None, "editor_open": False, "started_at": None, "target_min": None,
-        "elapsed_s": None}
+        "elapsed_s": None, "clock": None}
     h = service.next_problem(uid)
     st = c.get("/handout/state").json()
     assert st["open_handout_id"] == h.handout_id and st["editor_open"] is False
     assert st["target_min"] == h.target_min and st["elapsed_s"] >= 0
     service.unlock_editor(uid, h.handout_id)
     with db.session_scope() as s:
-        s.get(Handout, h.handout_id).handed_at = datetime.now() - timedelta(minutes=30)
+        row = s.get(Handout, h.handout_id)
+        row.handed_at = row.clock_anchor = datetime.now() - timedelta(minutes=30)
     assert c.get("/handout/state").json()["elapsed_s"] >= 1799
     service.reset_timer(uid, h.handout_id)
     st2 = c.get("/handout/state").json()
@@ -248,10 +249,9 @@ def test_no_fast_polling_left():
     from pathlib import Path
     static = Path(webapp.__file__).parent / "static"
     solve = (static / "solve.js").read_text(encoding="utf-8")
-    viz = (static / "viz.js").read_text(encoding="utf-8")
     banner = (Path(webapp.__file__).parent / "templates" / "_coach_banner.html").read_text(
         encoding="utf-8")
-    for src in (solve, viz, banner):
+    for src in (solve, banner):
         assert not re.search(r"setTimeout\(\s*(poll|tick|pollStatement)\b", src)
     assert "window.fetch =" not in banner
 

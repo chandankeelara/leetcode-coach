@@ -7,6 +7,8 @@ user, the app is single-user).
 
 How Claude learns of website events: it calls `wait_for_event`, which blocks until the web UI
 pushes one (approach / submission / stuck / skip / chat / timer_over) or the timeout passes.
+The server adds `clock_checkpoint` {pct, elapsed_min, target_min, has_approach} when the
+coach's clock crosses 50 / 100 / 150 % of target.
 
 RULE ZERO lives here structurally:
   - `next_problem` returns the Handoff fields and nothing else (extra keys are stripped and
@@ -199,7 +201,7 @@ def _open_handout():
 
 @mcp.tool()
 def show_visual(kind: str, spec: dict) -> dict:
-    """Draw something in his problem pane: array | grid | list | tree | steps | io | html. Captions go through the leak guard."""
+    """Draw something into his discussion thread, as your message: array | grid | list | tree | steps | io | html. Captions go through the leak guard."""
     hid = _open_handout()
     if hid is None:
         return {"error": "no open problem"}
@@ -240,9 +242,27 @@ def reset_timer() -> dict:
         return {"error": str(e)}
 
 
+def _clock(action, reason="", target_min=None, label=None):
+    hid = _open_handout()
+    if hid is None:
+        return {"error": "no open problem"}
+    try:
+        return _jsonable(svc().clock(uid(), hid, action, reason=reason, target_min=target_min,
+                                     label=label))
+    except ValueError as e:
+        return {"error": str(e)}
+
+
+@mcp.tool()
+def clock(action: str, reason: str = "", target_min: int | None = None,
+          label: str | None = None) -> dict:
+    """Control his clock: start | pause | resume | reset | target | phase. Say why in chat when you pause or reset."""
+    return _clock(action, reason, target_min, label)
+
+
 @mcp.tool()
 def clear_visuals() -> dict:
-    """Remove every drawing from his problem pane for the open problem."""
+    """Clear every drawing of the open problem from his thread (each becomes a muted "Illustration cleared." line)."""
     hid = _open_handout()
     if hid is None:
         return {"error": "no open problem"}
@@ -277,16 +297,25 @@ async def _wait(timeout_s, ctx=None):
 async def wait_for_event(timeout_s: int = 1500, ctx: Context = None) -> dict:
     """Block until the learner does something on the website, then return {kind, payload};
     {kind: "timeout"} if nothing came. kind: approach | submission | stuck | skip | chat |
-    timer_over. Call it at the END of every turn while he is working. Claude Code may move it
+    timer_over | clock_checkpoint. Call it at the END of every turn while he is working. Claude Code may move it
     to the background after ~2 min; that is fine, the result still arrives."""
     return _jsonable(await _wait(timeout_s, ctx))
 
 
 @mcp.tool()
-def say(text: str) -> dict:
-    """Post one coach message to the chat panel. One thing per message."""
-    mid = svc().post_message(uid(), "coach", text)
-    return {"message_id": mid}
+def say(text: str, clock_action: str | None = None, clock_reason: str = "",
+        target_min: int | None = None, label: str | None = None) -> dict:
+    """Post one coach message to the chat panel. One thing per message. Optional clock_action
+    (as in `clock`) is applied first, so "Clock stopped. <why>." and the pause are one call;
+    if the clock change fails nothing is posted."""
+    out = {}
+    if clock_action:
+        c = _clock(clock_action, clock_reason, target_min, label)
+        if "error" in c:
+            return {"error": c["error"], "posted": False}
+        out["clock"] = c
+    out["message_id"] = svc().post_message(uid(), "coach", text)
+    return out
 
 
 def _minutes_since_handout(handout_id):
@@ -302,15 +331,19 @@ def _minutes_since_handout(handout_id):
 @mcp.tool()
 def log_attempt(handout_id: int, bugs: int, hints: int, optimal: bool, derived_cold: bool,
                 notes: str = "", abandoned: bool = False, actual_min: int | None = None) -> dict:
-    """Record the attempt. actual_min defaults to now minus the handout start time. Returns
-    outcome and retry-queue action."""
-    if actual_min is None:
-        actual_min = _minutes_since_handout(handout_id)
-    r = svc().log_attempt(uid(), handout_id=handout_id, actual_min=actual_min, bugs=bugs,
-                          optimal=optimal, derived_cold=derived_cold, hints=hints,
-                          notes=notes, abandoned=abandoned)
+    """Record the attempt. actual_min defaults to the minutes on your clock (pauses excluded);
+    pass it only if the clock was broken. Returns outcome, retry-queue action, actual_min,
+    wall_min and clock_note."""
+    kw = {}
+    if actual_min is not None:
+        kw["actual_min"] = actual_min
+    elif not hasattr(svc(), "clock"):          # an older service: wall time since handout
+        kw["actual_min"] = _minutes_since_handout(handout_id)
+    r = svc().log_attempt(uid(), handout_id=handout_id, bugs=bugs, optimal=optimal,
+                          derived_cold=derived_cold, hints=hints, notes=notes,
+                          abandoned=abandoned, **kw)
     out = _jsonable(r)
-    out["actual_min"] = actual_min
+    out.setdefault("actual_min", kw.get("actual_min"))
     return out
 
 

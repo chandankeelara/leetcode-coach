@@ -405,6 +405,15 @@ body.app-solve main { flex: 1; min-height: 0; display: flex; }
 .clock-of-lbl { font-family: var(--f-ui); font-stretch: normal; font-size: 13px; letter-spacing: 0; }
 .clock-state { font: 600 12.5px/1 var(--f-ui); color: var(--warn); white-space: nowrap; }
 .clock-state:empty { display: none; }
+.clock-phase { font: 500 12.5px/1 var(--f-ui); color: var(--text-3); white-space: nowrap; max-width: 14ch; overflow: hidden; text-overflow: ellipsis; }
+.clock-phase:empty { display: none; }
+.clock-paused {
+  font: 600 11.5px/1 var(--f-ui); color: var(--text-2); white-space: nowrap; cursor: default;
+  padding: 3px 7px; border-radius: 999px; background: var(--line-2);
+}
+.clock-paused[hidden] { display: none; }
+.clock[data-run="paused"] .clock-now { color: var(--text-3); }
+.clock[data-run="paused"] .clock-fill { transition: none; }
 .clock[data-state="over"] .clock-now { color: var(--warn); }
 .clock[data-state="over"] .clock-fill { background: var(--warn); }
 .clock[data-state="way-over"] .clock-now, .clock[data-state="way-over"] .clock-state { color: var(--danger); }
@@ -519,6 +528,12 @@ body.app-solve .toasts { right: auto; left: var(--s4); bottom: var(--s4); }
   font-size: 15px; line-height: 1.58; white-space: pre-wrap; overflow-wrap: anywhere;
 }
 .msg.cont .msg-body { border-top-left-radius: 14px; }
+/* coach illustration as a thread message: may use the full pane width; wide content scrolls
+   sideways inside the bubble, never the page */
+.msg.has-visual { min-width: 0; }
+.msg-body.msg-viz { max-width: 100%; min-width: 0; white-space: normal; padding: 10px 12px; }
+.msg-viz-scroll { max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; }
+.msg-body.viz-cleared { background: none; border-style: dashed; color: var(--text-3); font-size: 13px; padding: 6px 12px; }
 .msg.user { align-items: flex-end; }
 .msg.user .msg-body {
   border-radius: 14px 4px 14px 14px;
@@ -755,7 +770,7 @@ body.app-solve .toasts { right: auto; left: var(--s4); bottom: var(--s4); }
   .clock-now { font-size: 16px; }
   .clock-track { width: 64px; }
   .clock-of { font-size: 12px; }
-  .clock-of-lbl, .clock-state { display: none; }
+  .clock-of-lbl, .clock-state, .clock-phase { display: none; }
   .clock-of::before { content: "/ "; }
   .pane-head { padding-left: var(--s4); padding-right: var(--s2); }
   .pane-tools .btn { padding: 0 8px; font-size: 13px; }
@@ -861,6 +876,9 @@ body.app-solve .toasts { right: auto; left: var(--s4); bottom: var(--s4); }
 .tvt i.over { background: var(--warn); }
 .tvt i.way { background: var(--danger); }
 .tvt b { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--text-2); border-radius: 1px; }
+.rv-clock { display: block; margin-top: 8px; }
+.rv-clock-log { margin: 4px 0 0; padding-left: 16px; font-size: 12.5px; color: var(--text-3); }
+.rv-clock-log li + li { margin-top: 2px; }
 
 /* dashboard */
 .kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-block: 1px solid var(--line); margin-bottom: var(--s6); }

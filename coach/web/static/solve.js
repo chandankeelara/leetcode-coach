@@ -26,28 +26,42 @@
   var wide = matchMedia("(min-width: 1100px)");
   var reduce = matchMedia("(prefers-reduced-motion: reduce)");
 
-  /* ---------- timer ---------- */
+  /* ---------- timer: the coach's clock ----------
+     Rendered from {state, elapsed_s at fetch time}: running counts up from there, paused
+     freezes. /handout/state is refetched on every `clock` event. */
   var elapsed0 = parseInt(root.dataset.elapsed, 10) || 0;
   var target = (parseInt(root.dataset.target, 10) || 1) * 60;
+  var run = root.dataset.run !== "paused";
+  var resets = parseInt(root.dataset.resets, 10) || 0;
   var t0 = performance.now();
   var tNow = $("t-now"), tFill = $("t-fill"), timer = $("timer"), tState = $("t-state");
+  var tPaused = $("t-paused"), tPhase = $("t-phase"), tTarget = $("t-target");
   var baseTitle = root.dataset.title;
   function fmt(n) {
     var h = Math.floor(n / 3600), mi = Math.floor((n % 3600) / 60), s = n % 60;
     var mm = String(mi).padStart(2, "0"), ss = String(s).padStart(2, "0");
     return h ? h + ":" + mm + ":" + ss : mm + ":" + ss;
   }
-  var startedAt = null;   /* ISO from /handout/state; a change = the coach reset the clock */
-  function restartTimer(elapsed, iso) {
-    elapsed0 = Math.max(0, elapsed | 0);
+  var startedAt = null;   /* ISO from /handout/state; moves on a reset (title only) */
+  function applyClock(c) {
+    if (!c) return;
+    elapsed0 = Math.max(0, c.elapsed_s | 0);
     t0 = performance.now();
-    startedAt = iso;
-    var d = iso ? new Date(iso) : null;
-    if (d && !isNaN(d)) timer.title = "Started " + String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+    run = c.state !== "paused";
+    timer.dataset.run = run ? "running" : "paused";
+    tPaused.hidden = run;
+    tPaused.title = run ? "" : (c.pause_reason || "");
+    tPhase.textContent = c.phase || "";
+    if (c.target_min) {
+      target = c.target_min * 60;
+      tTarget.textContent = String(c.target_min).padStart(2, "0") + ":00";
+    }
+    if ((c.resets | 0) > resets) toast("Clock reset.", "info");
+    resets = c.resets | 0;
     tick();
   }
   function tick() {
-    var n = elapsed0 + Math.floor((performance.now() - t0) / 1000);
+    var n = elapsed0 + (run ? Math.floor((performance.now() - t0) / 1000) : 0);
     tNow.textContent = fmt(n);
     tFill.style.transform = "scaleX(" + Math.min(1, n / (target * 1.5)) + ")";
     var st = n >= target * 1.5 ? "way-over" : n >= target ? "over" : "";
@@ -491,6 +505,26 @@
     else if (ed === "0" && stage() === "code") lockEditor();
   }
   function pollSoon() { fetchMessages(); }
+  /* A `visual` event after a clear: swap each illustration bubble the server now marks
+     cleared for its muted line. New illustrations arrive as messages (fetchMessages). */
+  function refreshVisuals() {
+    if (closing || !log.querySelector('.msg[data-visual]:not([data-cleared])')) return;
+    fetch("/messages?since=0", { credentials: "same-origin", headers: { "Accept": "text/html" } }).then(function (r) {
+      if (!r.ok) throw new Error(r.status);
+      return r.text();
+    }).then(function (t) {
+      var tpl = document.createElement("template");
+      tpl.innerHTML = t;
+      log.querySelectorAll('.msg[data-visual]:not([data-cleared])').forEach(function (el) {
+        var fresh = tpl.content.querySelector('.msg[data-id="' + el.dataset.id + '"]');
+        if (fresh && fresh.hasAttribute("data-cleared")) {
+          fresh.className = el.className.replace(/\bnew\b/, "");
+          fresh.setAttribute("data-cleared", "1");
+          el.replaceWith(fresh);
+        }
+      });
+    }).catch(function () {});
+  }
   function fetchMessages() {
     if (closing) return;
     if (inflight) { again = true; return; }
@@ -521,11 +555,12 @@
       var open = st.open_handout_id === null ? "" : String(st.open_handout_id);
       if (open !== hid) { closed(open); return; }
       applyEditor(st.editor_open ? "1" : "0");
-      if (st.target_min) target = st.target_min * 60;
-      if (startedAt === null) startedAt = st.started_at;
-      else if (st.started_at && st.started_at !== startedAt) {
-        restartTimer(st.elapsed_s, st.started_at);
-        toast("Clock restarted.", "info");
+      if (st.clock) applyClock(st.clock);
+      else if (st.target_min) target = st.target_min * 60;
+      if (st.started_at && st.started_at !== startedAt) {
+        startedAt = st.started_at;
+        var d = new Date(st.started_at);
+        if (!isNaN(d)) timer.title = "Started " + String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
       }
     }).catch(function () {});
   }
@@ -555,8 +590,10 @@
     coachLive.onState(function (st) { setLive(st !== "failed"); });
     coachLive.on("message", fetchMessages);
     coachLive.on("statement", fetchStatement);
+    coachLive.on("visual", refreshVisuals);
     coachLive.on("editor", fetchState);
     coachLive.on("handout", fetchState);
+    coachLive.on("clock", fetchState);
     coachLive.on("resync", function () {
       fetchMessages(); fetchState();
       if (stmt && stmt.hasAttribute("data-pending")) fetchStatement();

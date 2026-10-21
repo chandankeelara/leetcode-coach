@@ -1,5 +1,5 @@
 /* One live connection per page: EventSource('/stream'). Every coach-side write lands as an
-   event (message | statement | visual | editor | handout | presence), so components refresh
+   event (message | statement | visual | editor | handout | clock | presence), so components refresh
    the moment the coach acts. Usage:
      coachLive.on("statement", function (data) { ... });
      coachLive.on("resync", fn)  -- after (re)connect (hello) and on each fallback poll tick
@@ -12,7 +12,7 @@
   var subs = {}, stateSubs = [], es = null, state = "connecting";
   var lastId = null, backoff = 1000, retryT = null, fallbackT = null, errors = 0;
   var FALLBACK_MS = 20000, MAX_BACKOFF = 30000;
-  var KINDS = ["hello", "message", "statement", "visual", "editor", "handout", "presence"];
+  var KINDS = ["hello", "message", "statement", "visual", "editor", "handout", "clock", "presence"];
 
   function dispatch(kind, data) {
     (subs[kind] || []).slice().forEach(function (fn) {

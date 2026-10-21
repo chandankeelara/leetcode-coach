@@ -67,6 +67,13 @@ class Handout(Base):
     target_min: Mapped[int] = mapped_column(Integer)
     status: Mapped[str] = mapped_column(String(16), default="open")       # open|logged|skipped
     editor_open: Mapped[bool | None] = mapped_column(Boolean, default=False)  # coach opens it
+    # The coach's clock (coach/clock.py). NULLs on old rows = running since handed_at, accum 0.
+    clock_state: Mapped[str | None] = mapped_column(String(8), nullable=True)  # running|paused
+    clock_anchor: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # segment start
+    clock_accum_s: Mapped[int | None] = mapped_column(Integer, nullable=True)  # banked seconds
+    phase_label: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    first_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # never moves
+    checkpoints_fired: Mapped[list | None] = mapped_column(JSON, nullable=True)   # [50, 100, ...]
 
 
 class Attempt(Base):
@@ -87,6 +94,21 @@ class Attempt(Base):
     notes: Mapped[str] = mapped_column(Text, default="")
     source: Mapped[str] = mapped_column(String(16), default="app")   # import | app
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    wall_min: Mapped[int | None] = mapped_column(Integer, nullable=True)   # wall clock from start
+    clock_note: Mapped[str | None] = mapped_column(Text, nullable=True)   # "2 pauses (...), 1 reset"
+
+
+class ClockEvent(Base):
+    """Every coach clock action, with time and reason: the record shown on reveal and in the
+    session summary. action: start | pause | resume | reset | target | phase."""
+    __tablename__ = "clock_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    handout_id: Mapped[int] = mapped_column(ForeignKey("handouts.id"), index=True)
+    action: Mapped[str] = mapped_column(String(8))
+    at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    reason: Mapped[str] = mapped_column(Text, default="")
+    value: Mapped[object] = mapped_column(JSON, default=dict)
 
 
 class Skill(Base):
@@ -198,10 +220,13 @@ class CoachMessage(Base):
     role: Mapped[str] = mapped_column(String(16))
     content: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    # a coach illustration posted as this message (the thread renders the visual's html)
+    visual_id: Mapped[int | None] = mapped_column(ForeignKey("visuals.id"), nullable=True)
 
 
 class Visual(Base):
-    """Coach-drawn illustrations shown under the statement (array, grid, tree, ...).
+    """Coach-drawn illustrations (array, grid, tree, ...), shown in the discussion thread as
+    the coach message that carries `visual_id`.
     `html` is the rendered, escaped markup; `spec` the JSON it came from."""
     __tablename__ = "visuals"
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -212,13 +237,14 @@ class Visual(Base):
     html: Mapped[str] = mapped_column(Text)
     caption: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    cleared_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # clear_visuals
 
 
 class UiEvent(Base):
     """Change signal for open pages: every coach-side write appends one row; the web process
     streams them over SSE (/stream). user_id NULL = every user (presence). Rows older than an
     hour are pruned on each emit. kind: message | statement | visual | editor | handout |
-    presence."""
+    clock | presence."""
     __tablename__ = "ui_events"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)

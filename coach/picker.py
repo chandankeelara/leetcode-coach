@@ -16,7 +16,7 @@ from sqlalchemy import select
 
 from . import rules
 from .catalog import default_target, leetcode_url
-from .models import Burned, Handout, Problem
+from .models import Attempt, Burned, ClockEvent, Handout, Problem
 from . import state
 
 INSTRUCTION = "Give your approach in plain words before any code."
@@ -179,15 +179,34 @@ def pick_next(s, user_id, today):
     if pick is None:
         return None
     sess = state.current_session(s, user_id, today)
+    at = datetime.combine(today, datetime.now().time())
     h = Handout(
         user_id=user_id, session_id=sess.id, problem_number=pick.problem.number,
-        slot=pick.slot, pattern_slug=pick.pattern,
-        handed_at=datetime.combine(today, datetime.now().time()),
-        target_min=default_target(pick.problem.difficulty), status="open",
+        slot=pick.slot, pattern_slug=pick.pattern, handed_at=at,
+        target_min=target_for(s, user_id, pick.problem), status="open",
+        clock_state="running", clock_anchor=at, clock_accum_s=0, first_started_at=at,
+        checkpoints_fired=[],
     )
     s.add(h)
     s.flush()
+    # the server starts the coach's clock at handout
+    s.add(ClockEvent(user_id=user_id, handout_id=h.id, action="start", at=at, reason="handout",
+                     value={"target_min": h.target_min}))
     return handoff_for(h, pick.problem)
+
+
+RETRY_TARGET_FACTOR = 0.8
+
+
+def target_for(s, user_id, problem):
+    """Target minutes for a new handout. Seen before: 80% of the FIRST attempt's target
+    (retries are tighter: 15 -> 12, 20 -> 16). Else the difficulty default."""
+    first = s.scalars(select(Attempt.target_min).where(
+        Attempt.user_id == user_id, Attempt.problem_number == problem.number)
+        .order_by(Attempt.day, Attempt.id).limit(1)).first()
+    if first:
+        return max(1, round(RETRY_TARGET_FACTOR * first))
+    return default_target(problem.difficulty)
 
 
 def handoff_for(h, problem):

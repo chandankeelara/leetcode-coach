@@ -14,10 +14,12 @@ from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError
 from sqlalchemy import delete, select
 
+from . import clock as clk
 from . import picker, rules, state
 from .catalog import default_target, pattern_name, pattern_tier
 from .db import session_scope
-from .models import (Attempt, Burned, CoachMessage, Config, CoachSession, Event, Handout, Pattern,
+from .models import (Attempt, Burned, ClockEvent, CoachMessage, Config, CoachSession, Event,
+                     Handout, Pattern,
                      PatternState, Problem, RetryItem, Skill, SkillEvent, TrapRecall, UiEvent,
                      User, Visual)
 
@@ -33,7 +35,8 @@ def _today(today):
 
 
 # ---- live page signal ----------------------------------------------------------------------
-UI_KINDS = frozenset({"message", "statement", "visual", "editor", "handout", "presence"})
+UI_KINDS = frozenset({"message", "statement", "visual", "editor", "handout", "clock",
+                      "presence"})
 UI_KEEP_S = 3600            # ui_events rows older than this are pruned on each emit
 
 
@@ -200,16 +203,158 @@ def skip_problem(handout_id):
 
 
 def reset_timer(user_id, handout_id):
-    """Restart the clock of an open handout from now (handed_at = now). Only for a problem
-    opened long before he actually started. ValueError unless it is his and open.
+    """Alias of clock(..., "reset", reason="reset"): the coach clock back to 0 from now (wall
+    time keeps counting). ValueError unless it is his and open. Also emits `handout`.
     Returns {"ok": True, "handout_id", "started_at"}."""
+    clock(user_id, handout_id, "reset", reason="reset")
+    with session_scope() as s:
+        h = s.get(Handout, handout_id)
+        emit(user_id, "handout", h.id, s)
+        return {"ok": True, "handout_id": h.id, "started_at": h.handed_at.isoformat()}
+
+
+# ---- the coach's clock (coach/clock.py has the math) ----------------------------------------
+def _materialize_clock(h):
+    """Old rows have NULL clock columns: running since handed_at, accum 0."""
+    if h.first_started_at is None:
+        h.first_started_at = h.handed_at
+    if h.clock_anchor is None:
+        h.clock_anchor = h.handed_at
+    if h.clock_accum_s is None:
+        h.clock_accum_s = 0
+    if h.clock_state is None:
+        h.clock_state = "running"
+
+
+def _clock_events(s, handout_id):
+    return list(s.scalars(select(ClockEvent).where(ClockEvent.handout_id == handout_id)
+                          .order_by(ClockEvent.id)))
+
+
+def clock(user_id, handout_id, action, reason="", target_min=None, label=None, now=None):
+    """The coach owns the clock. action: start | pause | resume | reset | target | phase.
+      start   running from now (no-op if running; sets first_started_at if unset)
+      pause   bank elapsed, freeze. No reason -> stored "" and a "warning": "say why"
+      resume  running from now (no-op if running)
+      reset   coach clock to 0 from now, running; wall time and first_started_at unchanged;
+              handed_at = now (the handoff's start time); checkpoints re-arm.
+              No reason -> "warning": "say why"
+      target  target_min = 1..180; checkpoints re-arm
+      phase   neutral label next to the timer ("approach", "code"); leak-guarded like a
+              statement: ValueError("leak: ...") and nothing stored. "" clears it.
+    Every action writes a clock_events row and emits `clock`. ValueError unless the handout
+    is his and open, or on a bad action/target. Returns clock.state(...) + handout_id
+    (+ "warning")."""
+    if action not in clk.ACTIONS:
+        raise ValueError(f"unknown clock action {action!r}; one of {', '.join(clk.ACTIONS)}")
+    reason = (reason or "").strip()
+    now = now or datetime.now()
     with session_scope() as s:
         h = s.get(Handout, handout_id)
         if h is None or h.user_id != user_id or h.status != "open":
             raise ValueError(f"no open handout {handout_id}")
-        h.handed_at = datetime.now()
-        emit(user_id, "handout", h.id, s)
-        return {"ok": True, "handout_id": h.id, "started_at": h.handed_at.isoformat()}
+        _materialize_clock(h)
+        value, warning = {}, None
+        if action in ("start", "resume"):
+            if h.clock_state != "running":
+                h.clock_state, h.clock_anchor = "running", now
+        elif action == "pause":
+            if h.clock_state == "running":
+                h.clock_accum_s = clk.elapsed_s(h, now)
+                h.clock_state, h.clock_anchor = "paused", now
+            if not reason:
+                warning = "say why"
+        elif action == "reset":
+            h.clock_accum_s, h.clock_anchor, h.clock_state = 0, now, "running"
+            h.handed_at = now
+            h.checkpoints_fired = []
+            if not reason:
+                warning = "say why"
+        elif action == "target":
+            if isinstance(target_min, bool):
+                raise ValueError("target_min must be 1..180")
+            try:
+                n = int(target_min)
+            except (TypeError, ValueError):
+                raise ValueError("target needs target_min, an int 1..180") from None
+            if not clk.TARGET_MIN <= n <= clk.TARGET_MAX:
+                raise ValueError("target_min must be 1..180")
+            h.target_min = n
+            h.checkpoints_fired = []
+            value = {"target_min": n}
+        elif action == "phase":
+            text = re.sub(r"\s+", " ", (label or "")).strip()
+            if len(text) > 40:
+                raise ValueError("phase label: 40 characters max")
+            bad = leak_words(text, s.get(Problem, h.problem_number).title, s)
+            if bad:
+                raise ValueError("leak: " + ", ".join(bad))
+            h.phase_label = text or None
+            value = {"label": text}
+        s.add(ClockEvent(user_id=user_id, handout_id=h.id, action=action, at=now,
+                         reason=reason, value=value))
+        s.flush()
+        emit(user_id, "clock", h.id, s)
+        out = clk.state(h, now, _clock_events(s, h.id))
+        out["handout_id"] = h.id
+        if warning:
+            out["warning"] = warning
+        return out
+
+
+def clock_state(user_id, handout_id, now=None):
+    """clock.state(...) + handout_id of a handout (any status), or None if it is not his."""
+    now = now or datetime.now()
+    with session_scope() as s:
+        h = s.get(Handout, handout_id)
+        if h is None or h.user_id != user_id:
+            return None
+        out = clk.state(h, now, _clock_events(s, h.id))
+        out["handout_id"] = h.id
+        return out
+
+
+def clock_record(s, h, end=None):
+    """{coach_min, wall_min, pauses: [{reason, minutes, at}], resets: [{reason, at}]} for a
+    handout: as stored on its attempt when logged, else live."""
+    a = s.scalars(select(Attempt).where(Attempt.handout_id == h.id)
+                  .order_by(Attempt.id.desc())).first()
+    end = end or (a.created_at if a is not None else datetime.now())
+    rec = clk.record(_clock_events(s, h.id), end)
+    coach_min = a.actual_min if a is not None else max(1, round(clk.elapsed_s(h, end) / 60))
+    if a is not None and a.wall_min is not None:
+        wall = a.wall_min
+    else:
+        wall = round(clk.wall_s(h, end) / 60)
+    return {"coach_min": coach_min, "wall_min": wall, **rec}
+
+
+def _fire_checkpoints(user_id, now=None):
+    """Called from wait_event's loop: for his open handout, push ONE `clock_checkpoint` event
+    when the coach clock first crosses 50 / 100 / 150 % of target (never while paused). If
+    several are crossed at once only the highest is pushed; all are marked fired. A reset or
+    a target change re-arms them. Returns the event id or None."""
+    now = now or datetime.now()
+    with session_scope() as s:
+        h = s.scalars(select(Handout).where(
+            Handout.user_id == user_id, Handout.status == "open",
+            Handout.slot != "imported").order_by(Handout.id.desc())).first()
+        if h is None:
+            return None
+        due = clk.due_checkpoints(h, now)
+        if not due:
+            return None
+        h.checkpoints_fired = sorted(set(h.checkpoints_fired or []) | set(due))
+        appr = s.scalars(select(Event).where(
+            Event.user_id == user_id, Event.kind == "approach",
+            Event.created_at >= clk.first_started(h) - timedelta(seconds=2)))
+        has_approach = any((e.payload or {}).get("handout_id") == h.id for e in appr)
+        e = Event(user_id=user_id, kind="clock_checkpoint", payload={
+            "pct": max(due), "elapsed_min": round(clk.elapsed_s(h, now) / 60),
+            "target_min": h.target_min, "has_approach": has_approach})
+        s.add(e)
+        s.flush()
+        return e.id
 
 
 # ---- the statement (written by the coach, stored on the problem) ----------------------------
@@ -302,10 +447,11 @@ def open_handout_id(user_id):
 
 
 def show_visual(user_id, handout_id, kind, spec):
-    """Render, leak-check and store one visual for a handout, and post a coach chat line
-    pointing at it. ValueError on a bad kind/spec, or ValueError('leak: ...') (nothing stored,
-    nothing posted) when any text in the spec names a technique or a difficulty.
-    Returns {"id", "html"}."""
+    """Render, leak-check and store one visual for a handout, and post it to the discussion
+    thread as a coach message (content = caption or kind label, visual_id = the visual; the
+    thread renders the visual itself). ValueError on a bad kind/spec, or ValueError('leak:
+    ...') (nothing stored, nothing posted) when any text in the spec names a technique or a
+    difficulty. Returns {"id", "html", "message_id"}."""
     from . import viz
     kind = viz.check_kind(kind)
     if not isinstance(spec, dict):
@@ -326,12 +472,14 @@ def show_visual(user_id, handout_id, kind, spec):
         v = Visual(user_id=user_id, handout_id=h.id, kind=kind, spec=spec, html=html_out,
                    caption=cap)
         s.add(v)
-        s.add(CoachMessage(user_id=user_id, handout_id=h.id, role="coach",
-                           content=f"See the problem pane: {label}"))
+        s.flush()
+        m = CoachMessage(user_id=user_id, handout_id=h.id, role="coach", content=label,
+                         visual_id=v.id)
+        s.add(m)
         s.flush()
         emit(user_id, "visual", v.id, s)
-        emit(user_id, "message", None, s)
-        return {"id": v.id, "html": html_out}
+        emit(user_id, "message", m.id, s)
+        return {"id": v.id, "html": html_out, "message_id": m.id}
 
 
 def visuals(user_id, handout_id, since_id=0):
@@ -339,7 +487,7 @@ def visuals(user_id, handout_id, since_id=0):
     with session_scope() as s:
         rows = s.scalars(select(Visual).where(
             Visual.user_id == user_id, Visual.handout_id == handout_id,
-            Visual.id > (since_id or 0)).order_by(Visual.id))
+            Visual.cleared_at.is_(None), Visual.id > (since_id or 0)).order_by(Visual.id))
         return [{"id": v.id, "kind": v.kind, "caption": v.caption, "html": v.html,
                  "created_at": v.created_at.isoformat()} for v in rows]
 
@@ -348,16 +496,20 @@ def count_visuals(user_id, handout_id):
     from sqlalchemy import func
     with session_scope() as s:
         return s.scalar(select(func.count(Visual.id)).where(
-            Visual.user_id == user_id, Visual.handout_id == handout_id)) or 0
+            Visual.user_id == user_id, Visual.handout_id == handout_id,
+            Visual.cleared_at.is_(None))) or 0
 
 
 def clear_visuals(user_id, handout_id):
-    """Delete a handout's visuals. Returns how many."""
+    """Clear a handout's visuals: each is marked cleared (cleared_at) and its thread bubble
+    turns into a muted "Illustration cleared." line. Returns how many."""
     with session_scope() as s:
         rows = s.scalars(select(Visual).where(Visual.user_id == user_id,
-                                              Visual.handout_id == handout_id)).all()
+                                              Visual.handout_id == handout_id,
+                                              Visual.cleared_at.is_(None))).all()
+        now = datetime.now()
         for v in rows:
-            s.delete(v)
+            v.cleared_at = now
         emit(user_id, "visual", handout_id, s)
         return len(rows)
 
@@ -377,14 +529,19 @@ def _retry_reason(actual, target, bugs, hints, optimal, derived_cold, abandoned,
     return f"{text}. {notes}".strip() if notes else text
 
 
-def log_attempt(user_id, handout_id=None, number=None, actual_min=0, bugs=0, optimal=True,
+def log_attempt(user_id, handout_id=None, number=None, actual_min=None, bugs=0, optimal=True,
                 derived_cold=True, hints=0, notes="", abandoned=False, target_min=None,
                 day=None):
     """Record an attempt. The outcome is computed here (rules.outcome); nobody types "clean".
 
+    actual_min left out: the coach's clock, round(elapsed / 60), at least 1 (0 with no
+    handout). The attempt also stores wall_min and clock_note (pauses / resets) from the clock
+    record. The outcome uses actual_min (the coach's clock).
+
     Retry queue (MASTER_CONTEXT): add if over 1.5x target, 2+ bugs, a hint, suboptimal, not
     derived cold, or abandoned; clear on a clean solve; an item already queued gets attempts+1.
-    Returns {attempt_id, outcome, retry: added|bumped|cleared|none, problem_number}."""
+    Returns {attempt_id, outcome, retry: added|bumped|cleared|none, problem_number,
+    actual_min, wall_min, clock_note}."""
     day = day or date.today()
     with session_scope() as s:
         h = None
@@ -402,6 +559,15 @@ def log_attempt(user_id, handout_id=None, number=None, actual_min=0, bugs=0, opt
             raise ValueError(f"unknown problem {number}; add it to the problems table first")
         if target_min is None:
             target_min = h.target_min if h else default_target(prob.difficulty)
+        now = datetime.now()
+        wall_min = clock_note = None
+        if h is not None:
+            wall_min = round(clk.wall_s(h, now) / 60)
+            clock_note = clk.note(clk.record(_clock_events(s, h.id), now)) or None
+            if actual_min is None:
+                actual_min = max(1, round(clk.elapsed_s(h, now) / 60))
+        if actual_min is None:
+            actual_min = 0
         if hints > 0:
             derived_cold = False        # a hint means the coach supplied part of the idea
         if abandoned:
@@ -412,7 +578,8 @@ def log_attempt(user_id, handout_id=None, number=None, actual_min=0, bugs=0, opt
             user_id=user_id, problem_number=number, pattern_slug=prob.pattern_slug, day=day,
             handout_id=h.id if h else None, target_min=target_min, actual_min=actual_min,
             bugs=bugs, hints=hints, optimal=optimal, derived_cold=derived_cold,
-            outcome=result, notes=notes or "", source="app")
+            outcome=result, notes=notes or "", source="app", wall_min=wall_min,
+            clock_note=clock_note)
         s.add(att)
         s.flush()
         if h:
@@ -444,7 +611,8 @@ def log_attempt(user_id, handout_id=None, number=None, actual_min=0, bugs=0, opt
 
         _update_pattern_state(s, user_id, prob.pattern_slug, h, day)
         return {"attempt_id": att.id, "outcome": result, "retry": action,
-                "problem_number": number}
+                "problem_number": number, "actual_min": actual_min, "wall_min": wall_min,
+                "clock_note": clock_note}
 
 
 def _update_pattern_state(s, user_id, slug, handout, day):
@@ -544,6 +712,7 @@ def reveal(handout_id):
                "tier": pattern_tier(slug) if slug else None}
         if h.slot == "refire" and slug:
             out["trap_quiz"] = trap_quiz(h.user_id, slug, s)
+        out["clock"] = clock_record(s, h)
         return out
 
 
@@ -581,6 +750,7 @@ SEEN_KEY = "coach_last_seen"
 SEEN_EVERY_S = 5.0          # heartbeat write throttle while polling
 ONLINE_WINDOW_S = 90        # heartbeat this fresh = coach is connected
 MSG_WINDOW_S = 600          # fallback: a coach message this recent = coach is around
+CHECKPOINT_EVERY_S = 1.0    # how often wait_event checks the clock checkpoints
 
 
 def coach_seen(now=None):
@@ -633,14 +803,18 @@ def coach_online(now=None):
 
 async def wait_event(user_id, timeout_s=25.0, poll_s=0.25):
     """Long-poll: return (and mark consumed) every pending event as soon as there is one, or
-    [] when `timeout_s` passes with none. Each pass beats the coach heartbeat (<= once / 5 s)."""
+    [] when `timeout_s` passes with none. Each pass beats the coach heartbeat (<= once / 5 s)
+    and checks the clock checkpoints (<= once / s; see _fire_checkpoints)."""
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout_s
-    beat = None
+    beat = checked = None
     while True:
         if beat is None or loop.time() - beat >= SEEN_EVERY_S:
             beat = loop.time()
             coach_seen()
+        if checked is None or loop.time() - checked >= CHECKPOINT_EVERY_S:
+            checked = loop.time()
+            _fire_checkpoints(user_id)
         got = _drain(user_id)
         if got:
             return got
@@ -689,11 +863,21 @@ def editor_open(user_id, handout_id):
 
 def list_messages(user_id, since_id=0, limit=200):
     with session_scope() as s:
-        rows = s.scalars(select(CoachMessage).where(
+        rows = list(s.scalars(select(CoachMessage).where(
             CoachMessage.user_id == user_id, CoachMessage.id > since_id)
-            .order_by(CoachMessage.id).limit(limit))
+            .order_by(CoachMessage.id).limit(limit)))
+        vids = {m.visual_id for m in rows if m.visual_id is not None}
+        vis = {v.id: v for v in s.scalars(select(Visual).where(Visual.id.in_(vids)))} \
+            if vids else {}
+
+        def visual(m):
+            v = vis.get(m.visual_id)
+            if v is None:
+                return None
+            return {"id": v.id, "kind": v.kind, "caption": v.caption,
+                    "html": "" if v.cleared_at else v.html, "cleared": v.cleared_at is not None}
         return [{"id": m.id, "role": m.role, "content": m.content, "handout_id": m.handout_id,
-                 "created_at": m.created_at.isoformat()} for m in rows]
+                 "created_at": m.created_at.isoformat(), "visual": visual(m)} for m in rows]
 
 
 def last_message_id(user_id):
@@ -777,14 +961,15 @@ def _attempt_row(a):
     return {"attempt_id": a.id, "number": a.problem_number, "target_min": a.target_min,
             "actual_min": a.actual_min, "bugs": a.bugs, "hints": a.hints,
             "optimal": a.optimal, "derived_cold": a.derived_cold, "outcome": a.outcome,
-            "notes": a.notes}
+            "notes": a.notes, "wall_min": a.wall_min, "clock_note": a.clock_note}
 
 
 def session_summary(user_id, today=None):
     """Everything today produced, so the coach writes the log without guessing. Progress
     talk: session end only. Pattern and slot appear only for LOGGED handouts (RULE ZERO).
     -> {"today", "session_id", "problems": [{handout_id, number, title, handed_at,
-        target_min, status, mode, attempt: {...} | None, reveal: {...} | None}],
+        target_min, status, mode, attempt: {...} | None, reveal: {...} | None,
+        clock: {coach_min, wall_min, pauses: [{reason, minutes, at}], resets: [{reason, at}]}}],
         "attempts_without_handout": [...], "skill_changes": [{name, level, evidence}],
         "retry": {"added", "cleared", "bumped"}, "trap_recall": [...]}"""
     day = _today(today)
@@ -812,7 +997,8 @@ def session_summary(user_id, today=None):
                 "handout_id": h.id, "number": p.number, "title": p.title,
                 "handed_at": h.handed_at.isoformat(), "target_min": h.target_min,
                 "status": h.status, "mode": picker.mode_for(h.slot),
-                "attempt": _attempt_row(a) if a else None, "reveal": rv})
+                "attempt": _attempt_row(a) if a else None, "reveal": rv,
+                "clock": clock_record(s, h)})
         linked = {h.id for h in handouts}
         loose = [_attempt_row(a) for a in atts if a.handout_id not in linked]
         events = s.execute(

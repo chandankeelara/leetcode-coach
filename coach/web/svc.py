@@ -138,6 +138,9 @@ class Svc:
     def editor_open(self, user_id, handout_id):
         return _s.editor_open(user_id, handout_id)
 
+    def clock_state(self, user_id, handout_id):
+        return _s.clock_state(user_id, handout_id)
+
     def messages(self, user_id, since_id=0):
         f = getattr(_s, "messages", None) or _s.list_messages
         return f(user_id, since_id)

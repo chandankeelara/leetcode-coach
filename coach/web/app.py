@@ -227,7 +227,21 @@ def this_handout(m, h):
 
 
 def elapsed_s(h):
+    """Wall seconds since the handoff's start: only the fallback for a service with no clock."""
     return max(0, int((datetime.now() - h.started_at).total_seconds()))
+
+
+def clock_of(uid, h):
+    """The coach's clock for a handoff (service.clock_state), or a running-since-start stand-in
+    when the service has none (test fakes)."""
+    f = getattr(service(), "clock_state", None)
+    c = f(uid, h.handout_id) if f else None
+    if c is None:
+        e = elapsed_s(h)
+        c = {"state": "running", "elapsed_s": e, "wall_s": e, "target_min": h.target_min,
+             "phase": None, "anchor_iso": h.started_at.isoformat(), "accum_s": 0,
+             "pause_reason": None, "pauses": 0, "resets": 0, "handout_id": h.handout_id}
+    return c
 
 
 # ---- auth ----------------------------------------------------------------------------------
@@ -285,7 +299,8 @@ async def solve(request: Request):
     msgs = service().messages(sess["uid"], 0)
     last = msgs[-1]["id"] if msgs else 0
     msgs = [m for m in msgs if this_handout(m, h)]
-    return render(request, "solve.html", sess, h=h, elapsed=elapsed_s(h),
+    c = clock_of(sess["uid"], h)
+    return render(request, "solve.html", sess, h=h, elapsed=c["elapsed_s"], clock=c,
                   started=h.started_at.strftime("%H:%M"), verdicts=VERDICTS, msgs=msgs,
                   last=last, editor_open=_editor_open(sess["uid"], h))
 
@@ -398,15 +413,18 @@ async def messages(request: Request, since: int = 0):
 
 
 def handout_state(uid):
-    """{open_handout_id, editor_open, started_at, target_min, elapsed_s} of the open problem
-    (all None when none is open). The page compares it against what it shows."""
+    """{open_handout_id, editor_open, started_at, target_min, elapsed_s, clock} of the open
+    problem (all None when none is open). elapsed_s and target_min are the coach's clock;
+    clock = service.clock_state (state running|paused, elapsed_s, wall_s, target_min, phase,
+    anchor_iso, accum_s, pause_reason, pauses, resets). The page renders from it."""
     h = service().current_handout(uid)
     if not h:
         return {"open_handout_id": None, "editor_open": False, "started_at": None,
-                "target_min": None, "elapsed_s": None}
+                "target_min": None, "elapsed_s": None, "clock": None}
+    c = clock_of(uid, h)
     return {"open_handout_id": h.handout_id, "editor_open": _editor_open(uid, h),
-            "started_at": h.started_at.isoformat(), "target_min": h.target_min,
-            "elapsed_s": elapsed_s(h)}
+            "started_at": h.started_at.isoformat(), "target_min": c["target_min"],
+            "elapsed_s": c["elapsed_s"], "clock": c}
 
 
 @app.get("/handout/state")
@@ -528,7 +546,8 @@ async def log_form(request: Request, abandoned: int = 0):
     h = service().current_handout(sess["uid"])
     if not h:
         return go("/")
-    return render(request, "log.html", sess, h=h, minutes=max(1, round(elapsed_s(h) / 60)),
+    minutes = max(1, round(clock_of(sess["uid"], h)["elapsed_s"] / 60))
+    return render(request, "log.html", sess, h=h, minutes=minutes,
                   abandoned=bool(abandoned), started=h.started_at.strftime("%H:%M"))
 
 

@@ -1,49 +1,9 @@
-/* Coach visuals (coach/viz.py renders, viz.js polls). App tokens only, so both themes follow. */
+/* Coach visuals (coach/viz.py renders; shown as coach messages in the thread). App tokens only, so both themes follow. */
 
-.viz-panel { margin-top: var(--s6); padding-top: var(--s5); border-top: 1px solid var(--line); max-width: 64ch; }
-.viz-title {
-  display: flex; align-items: center; gap: var(--s2);
-  font: 600 var(--t-xs)/1 var(--f-ui); letter-spacing: 0.08em; text-transform: uppercase;
-  color: var(--text-3);
-}
-.viz-count { font-size: 11px; letter-spacing: 0; color: var(--text-3); }
-.viz-items { margin-top: var(--s3); display: flex; flex-direction: column; gap: var(--s2); }
-
-/* one illustration */
-.viz-item {
-  min-width: 0;
-  border: 1px solid var(--line); border-radius: var(--r-2);
-  background: var(--raised);
-}
-.viz-item.is-new { border-color: var(--hl-line); }
-.viz-sum {
-  display: flex; align-items: baseline; gap: var(--s2);
-  padding: 9px var(--s3); cursor: pointer; list-style: none;
-  font-size: var(--t-sm); line-height: 1.4; color: var(--text-2);
-  border-radius: var(--r-2);
-}
-.viz-sum::-webkit-details-marker { display: none; }
-.viz-sum::before {
-  content: ""; flex: none; align-self: center;
-  width: 6px; height: 6px; margin-right: 2px;
-  border-right: 1.5px solid var(--text-3); border-bottom: 1.5px solid var(--text-3);
-  transform: rotate(-45deg); transition: transform var(--d-fast) var(--ease-out);
-}
-.viz-item[open] > .viz-sum::before { transform: rotate(45deg); }
-.viz-sum:hover { color: var(--text); }
-.viz-kind {
-  flex: none; font: 500 11px/1 var(--f-num); font-stretch: 87.5%; letter-spacing: -0.01em;
-  color: var(--text-3);
-}
-.viz-item.is-new .viz-kind { color: var(--hl-ink); }
-.viz-sum-text { min-width: 0; overflow-wrap: anywhere; }
-.viz-item[open] > .viz-sum { color: var(--text); }
-.viz-body { padding: 0 var(--s3) var(--s3); min-width: 0; }
 
 /* the figure: never wider than the pane; wide content scrolls inside */
 .viz { margin: 0; min-width: 0; }
 .viz-cap { margin-top: var(--s2); font-size: var(--t-sm); color: var(--text-2); }
-.viz-item .viz-cap { display: none; }          /* the summary shows it */
 .viz-scroll {
   max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain;
   padding: 2px 2px 6px; scrollbar-width: thin;
@@ -170,15 +130,3 @@
 .viz-raw svg { display: block; max-width: none; }
 .viz-raw svg text { fill: var(--text); font-family: var(--f-num); }
 .viz-raw .hl { background: var(--hl-wash); color: var(--hl-ink); }
-
-/* unread marker on the folded rail / the mobile Problem tab */
-.viz-dot {
-  display: inline-block; width: 7px; height: 7px; border-radius: 50%;
-  background: var(--hl); box-shadow: 0 0 0 2px var(--pane);
-}
-.prob-rail .viz-dot { margin-top: var(--s1); }
-.tab .viz-dot { margin-left: 6px; vertical-align: 2px; }
-
-@media (prefers-reduced-motion: reduce) {
-  .viz-sum::before { transition: none; }
-}

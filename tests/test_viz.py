@@ -132,16 +132,22 @@ def test_show_visual_stores_and_posts(hw):
                                                 "caption": "where does it go wrong?"})
     assert r["id"] and "viz-array" in r["html"]
     (m,) = service.list_messages(uid)
-    assert m["content"] == "See the problem pane: where does it go wrong?"
+    assert m["content"] == "where does it go wrong?" and m["id"] == r["message_id"]
     assert m["role"] == "coach" and m["handout_id"] == hid
+    assert m["visual"]["id"] == r["id"] and m["visual"]["html"] == r["html"]
+    assert m["visual"]["cleared"] is False
     service.show_visual(uid, hid, "steps", {"columns": ["i"], "rows": [[0]]})
-    assert service.list_messages(uid)[-1]["content"] == "See the problem pane: step table"
+    assert service.list_messages(uid)[-1]["content"] == "step table"
     rows = service.visuals(uid, hid)
     assert [v["kind"] for v in rows] == ["array", "steps"]
     assert service.visuals(uid, hid, since_id=rows[0]["id"])[0]["kind"] == "steps"
     assert service.count_visuals(uid, hid) == 2
     assert service.open_handout_id(uid) == hid
     assert service.clear_visuals(uid, hid) == 2 and service.visuals(uid, hid) == []
+    assert service.count_visuals(uid, hid) == 0 and service.clear_visuals(uid, hid) == 0
+    msgs = service.list_messages(uid)
+    assert len(msgs) == 2 and all(m["visual"]["cleared"] and m["visual"]["html"] == ""
+                                  for m in msgs)
 
 
 def test_show_visual_wrong_user_or_handout(hw):
@@ -199,11 +205,58 @@ def test_visuals_route(monkeypatch):
         webapp.app.state.service = None
 
 
-def test_partial_and_assets_exist():
+def test_no_pane_panel_left_and_styles_kept():
     from pathlib import Path
     web = Path(viz.__file__).parent / "web"
-    part = (web / "templates" / "_visuals.html").read_text(encoding="utf-8")
-    assert 'id="viz-items"' in part
-    js = (web / "static" / "viz.js").read_text(encoding="utf-8")
-    assert "/visuals?since=" in js and 'coachLive.on("visual"' in js
-    assert re.search(r"\.viz-hl", (web / "static" / "viz.css").read_text(encoding="utf-8"))
+    assert not (web / "templates" / "_visuals.html").exists()
+    assert not (web / "static" / "viz.js").exists()
+    solve = (web / "templates" / "solve.html").read_text(encoding="utf-8")
+    assert "viz-panel" not in solve and "viz.js" not in solve and "/static/viz.css" in solve
+    css = (web / "static" / "viz.css").read_text(encoding="utf-8")
+    assert re.search(r"\.viz-hl", css) and "viz-dot" not in css
+    js = (web / "static" / "solve.js").read_text(encoding="utf-8")
+    assert 'coachLive.on("visual", refreshVisuals)' in js
+
+
+# ---- the thread: a visual is a coach message -------------------------------------------------
+@pytest.fixture
+def thread(hw, monkeypatch):
+    import re as _re
+    from coach.web import app as webapp
+    from coach.web.svc import Svc
+    from coach.models import User
+    uid, hid = hw
+    monkeypatch.setenv("COACH_SECRET", "test-secret")
+    with db.session_scope() as s:                  # the thread shows today's open handout
+        s.get(Handout, hid).handed_at = __import__("datetime").datetime.now()
+    webapp.app.state.service = Svc()
+    c = TestClient(webapp.app, follow_redirects=False)
+    tok = _re.search(r'name="csrf" value="([^"]+)"', c.get("/login").text).group(1)
+    c.post("/login", data={"username": "tester", "password": "pw", "csrf": tok})
+    yield c, uid, hid
+    webapp.app.state.service = None
+
+
+def test_visual_renders_as_coach_bubble_in_thread(thread):
+    c, uid, hid = thread
+    service.post_message(uid, "coach", "before", handout_id=hid)
+    r = service.show_visual(uid, hid, "array", {"values": [5, 6], "caption": "look at index 1"})
+    service.post_message(uid, "coach", "after", handout_id=hid)
+    html = c.get("/messages?since=0").text
+    bubble = re.search(r'<div class="msg coach[^"]*has-visual[^"]*" data-id="(\d+)"[^>]*'
+                       r'data-visual="(\d+)"', html)
+    assert bubble and int(bubble.group(2)) == r["id"] and int(bubble.group(1)) == r["message_id"]
+    assert html.index("before") < html.index("viz-array") < html.index("after")
+    assert "msg-viz-scroll" in html and "look at index 1" in html
+    assert "See the problem pane" not in html
+    page = c.get("/solve").text
+    assert "viz-array" in page and "viz-panel" not in page
+
+
+def test_cleared_visual_becomes_muted_line(thread):
+    c, uid, hid = thread
+    service.show_visual(uid, hid, "io", {"cases": [{"input": "1", "output": "2"}]})
+    service.clear_visuals(uid, hid)
+    html = c.get("/messages?since=0").text
+    assert 'data-cleared="1"' in html and "Illustration cleared." in html
+    assert "viz-io" not in html

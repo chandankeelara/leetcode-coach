@@ -1,4 +1,4 @@
-"""Coach visuals: `render(kind, spec) -> html` for the problem pane.
+"""Coach visuals: `render(kind, spec) -> html`, shown as a coach message in the thread.
 
 Kinds: array | grid | list | tree | steps | io | html. Every value is escaped (markupsafe);
 styling is by class only (viz.css). `texts(kind, spec)` returns every human-readable string in a

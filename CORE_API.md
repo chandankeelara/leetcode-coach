@@ -60,15 +60,31 @@ next_problem(user_id: int, today: date | None = None, force_new: bool = False) -
 #   force_new=True marks it skipped and picks again. None = nothing passes the filters.
 skip_problem(handout_id: int) -> None                       # status -> skipped; still blocks 7 days
 reset_timer(user_id: int, handout_id: int) -> dict          # {"ok","handout_id","started_at"}
-#   handed_at = now on an open handout (only when it was opened long before he started);
-#   ValueError unless his and open. Emits `handout`.
+#   alias of clock(..., "reset", reason="reset"); also emits `handout`.
+
+# the coach's clock (coach/clock.py: elapsed_s, wall_s, state, record, note)
+clock(user_id, handout_id, action, reason="", target_min=None, label=None) -> dict
+#   action start | pause | resume | reset | target | phase. The coach owns it; nothing is
+#   blocked. Every call writes a clock_events row (action, at, reason, value) and emits
+#   `clock`. pause/reset without a reason add "warning": "say why". reset: accum 0, anchor
+#   now, handed_at now, first_started_at unchanged (wall keeps counting). target: 1..180.
+#   phase: leak-guarded label ("" clears). Checkpoints re-arm on reset/target.
+#   -> {state running|paused, elapsed_s, wall_s, target_min, phase, anchor_iso, accum_s,
+#       pause_reason, pauses, resets, handout_id[, warning]}
+clock_state(user_id, handout_id) -> dict | None   # same shape, read only
+#   wait_event also pushes `clock_checkpoint` {pct 50|100|150, elapsed_min, target_min,
+#   has_approach} once per threshold (only the highest if several are crossed at once;
+#   never while paused). Handout target at creation: 80% of the first attempt's target if
+#   the problem was attempted before (15 -> 12), else the difficulty default.
 
 log_attempt(user_id: int, handout_id: int | None = None, number: int | None = None,
-            actual_min: int = 0, bugs: int = 0, optimal: bool = True, derived_cold: bool = True,
+            actual_min: int | None = None, bugs: int = 0, optimal: bool = True, derived_cold: bool = True,
             hints: int = 0, notes: str = "", abandoned: bool = False,
             target_min: int | None = None, day: date | None = None) -> dict
+#   actual_min None (default) = the coach's clock in minutes (min 1); stores wall_min and
+#   clock_note ("2 pauses (float precision 4 min; ...), 1 reset") on the attempt.
 #   -> {"attempt_id", "outcome": clean|solved|abandoned, "retry": added|bumped|cleared|none,
-#       "problem_number"}
+#       "problem_number", "actual_min", "wall_min", "clock_note"}
 #   outcome comes from rules.outcome (0 bugs, <=1.5x target, optimal, derived cold; hints > 0
 #   counts as not derived cold). Retry queue: added when over 1.5x, 2+ bugs, a hint, suboptimal,
 #   not cold, or abandoned; an already-queued item gets attempts+1; clean clears it.
@@ -118,10 +134,14 @@ show_visual(user_id, handout_id, kind: str, spec: dict) -> dict   # {"id", "html
 #   LEAK GUARD on every text in the spec (caption, labels, pointer names, columns, cells, io
 #   strings, html text content) via leak_words + the problem title: ValueError("leak: ...")
 #   and nothing stored or posted. Bad kind/spec: ValueError. On success it stores a `visuals`
-#   row and posts coach chat "See the problem pane: <caption or kind>" with handout_id.
+#   row and posts it as a coach message (content = caption or kind label, visual_id = the
+#   visual) with handout_id: the thread renders the visual in a coach bubble. Returns
+#   {"id", "html", "message_id"}.
 visuals(user_id, handout_id, since_id=0) -> list   # [{"id","kind","caption","html","created_at"}]
 count_visuals(user_id, handout_id) -> int
-clear_visuals(user_id, handout_id) -> int          # rows deleted
+clear_visuals(user_id, handout_id) -> int          # rows marked cleared (cleared_at); their
+#   thread bubbles render as a muted "Illustration cleared." line. visuals()/count_visuals()
+#   skip cleared rows.
 open_handout_id(user_id) -> int | None             # latest open handout (the bridge uses it)
 
 # progress (see RULE ZERO)
@@ -159,6 +179,7 @@ emit(user_id: int | None, kind: str, ref_id: int | None = None, s=None) -> int
 #     editor    unlock_editor / lock_editor                       ref = handout id
 #     handout   next_problem when a new handout is made or force_new skips one, skip_problem,
 #               log_attempt, reset_timer                          ref = handout id
+#     clock     clock (every action)                              ref = handout id
 #     presence  coach_seen, at most once per 5 s                  user_id None
 ui_events_since(user_id, since_id=0, limit=200) -> list   # [{"id","kind","ref_id"}] (his + broadcast)
 ui_last_id() -> int
@@ -186,7 +207,9 @@ Exception: `service.RevealBlocked`.
 `reveal`, `burn_pattern`, `lint`, `report`, and (new) `log_trap_recall`, `record_refire`,
 `set_skill`, `write_session_log`, `session_summary`, `show_visual(kind, spec)` ->
 {ok, id} | {error}, `clear_visuals()` -> {ok, cleared}, `reset_timer()` -> {ok, handout_id,
-started_at} | {error} (all act on the open handout). Chat side effects:
+started_at} | {error}, `clock(action, reason, target_min, label)` -> clock state | {error},
+`say(text, clock_action=None, clock_reason="", target_min=None, label=None)` (clock first;
+on a clock error nothing is posted) (all act on the open handout). Chat side effects:
 
 * `next_problem` posts the handoff text (never the mode), then "Statement coming." when
   `paraphrase` is null.
@@ -196,7 +219,10 @@ started_at} | {error} (all act on the open handout). Chat side effects:
 
 `GET /visuals?since=N` (login) -> JSON `[{id, html, caption, kind}]` for the open handout,
 ids > N. Headers: `X-Visual-Count` (total for the handout; fewer than shown = cleared, the
-page rebuilds), `X-Open-Handout`. Page side: `templates/_visuals.html` + `static/viz.js`
+page rebuilds), `X-Open-Handout`. Kept as an API; the page no longer uses it. Page side:
+visuals are coach messages: `list_messages` rows carry `visual` {id, kind, caption, html,
+cleared} (or null), `_messages.html` renders the html in the bubble (scrolls sideways
+inside it), and a `visual` event makes `solve.js` swap cleared bubbles. `static/viz.css`
 (fetches on each `visual` event) + `static/viz.css`.
 
 ## Web: live stream
