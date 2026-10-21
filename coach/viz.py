@@ -4,6 +4,7 @@ Kinds: array | grid | list | tree | steps | io | html. Every value is escaped (m
 styling is by class only (viz.css). `texts(kind, spec)` returns every human-readable string in a
 spec, for the leak guard in `service.show_visual`. Bad specs raise ValueError.
 """
+import itertools
 import json
 import re
 from html.parser import HTMLParser
@@ -202,7 +203,37 @@ def _render_grid(spec):
     return _figure("grid-fig", body, _caption(spec))
 
 
+# ---- svg helpers ---------------------------------------------------------------------------
+_svg_ids = itertools.count(1)
+MIN_SCALE = 0.7          # below this the drawing stops shrinking and scrolls sideways instead
+
+
+def _marker(mid, cls):
+    return Markup('<marker id="{}" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="9" '
+                  'markerHeight="9" markerUnits="userSpaceOnUse" orient="auto-start-reverse">'
+                  '<path class="{}" d="M0.5,1 L9,5 L0.5,9 z"/></marker>').format(mid, cls)
+
+
+def _svg(cls, w, h, label, inner):
+    w, h = round(w), round(h)
+    return Markup('<svg class="viz-svg {cls}" width="{w}" height="{h}" viewBox="0 0 {w} {h}" '
+                  'data-minw="{m}" role="img" aria-label="{label}">{inner}</svg>').format(
+        cls=cls, w=w, h=h, m=round(w * MIN_SCALE), label=label, inner=inner)
+
+
+def _short(s, n):
+    return s if len(s) <= n else s[:n - 1] + "…"
+
+
 # ---- linked list ---------------------------------------------------------------------------
+LL_H = 34                # node box height
+LL_GAP = 30              # arrow run between boxes
+LL_CH = 8.2              # value glyph advance (mono 13px, condensed)
+LL_PTR_CH = 6.7          # pointer-tag glyph advance (mono 11px)
+LL_LOOP = 44             # bezier control depth of the back-arrow below the row
+_POS_CAPTION = re.compile(r"^pos\s*=\s*-?\d+$", re.I)
+
+
 def _render_list(spec):
     vals = _list(spec, "values", limit=MAX_ITEMS)
     n = len(vals)
@@ -212,31 +243,98 @@ def _render_list(spec):
     cyc = _int(cyc, "spec.cycle_to") if cyc is not None else None
     if cyc is not None and not 0 <= cyc < n:
         raise ValueError("spec.cycle_to must be an index into values")
+    cap = _caption(spec)
+    if _POS_CAPTION.match(cap):
+        cap = ""
+    if not n:
+        body = Markup('<div class="viz-scroll"><span class="viz-end">null</span></div>')
+        return _figure("list-fig", body, cap)
+
+    texts = [_short(_txt(v, "value"), 8) for v in vals]
+    nw = max(44, max(len(t) for t in texts) * LL_CH + 18)
+    pitch = nw + LL_GAP
+    pad = 6
+    ptr_h = 30 if ptr else 0
+    idx_h = 16 if cyc is not None else 0
+    top = pad + ptr_h + idx_h
+    mid_y = top + LL_H / 2
+    bot = top + LL_H
+    x0 = pad + (max(0, max(len(", ".join(v)) for v in ptr.values()) * LL_PTR_CH + 12 - nw) / 2
+                if ptr else 0)
+
+    def left(i):
+        return x0 + i * pitch
+
+    def cx(i):
+        return left(i) + nw / 2
+
+    uid = next(_svg_ids)
+    m_next, m_loop, m_ptr = f"vz{uid}n", f"vz{uid}c", f"vz{uid}p"
+    defs = [_marker(m_next, "viz-ll-head")]
     parts = []
-    for i, v in enumerate(vals):
-        p = ptr.get(i)
-        parts.append(Markup(
-            '<div class="{col}"><span class="viz-ptr">{ptr}</span>'
-            '<span class="{cell}">{v}</span><span class="viz-idx">{i}</span></div>').format(
-                col=_cls("viz-col", "viz-col-ptr" if p else ""),
-                ptr=", ".join(p) if p else "",
-                cell=_cls("viz-cell viz-node", "viz-hl" if i in hl else "",
-                          "viz-cycle-target" if i == cyc else ""),
-                v=_txt(v, "value"), i=i))
-        last = i == n - 1
-        if not last:
-            parts.append(Markup('<span class="viz-arrow" aria-hidden="true">&rarr;</span>'))
-    if cyc is not None:
-        parts.append(Markup('<span class="viz-arrow viz-back" aria-label="back to node {0}">'
-                            '&#8617;<span class="viz-back-to">{0}</span></span>').format(cyc))
-    elif n:
-        parts.append(Markup('<span class="viz-arrow" aria-hidden="true">&rarr;</span>'
-                            '<span class="viz-end">null</span>'))
+    for i in range(n - 1):
+        parts.append(Markup('<path class="viz-ll-next" d="M{:.1f},{:.1f} H{:.1f}" '
+                            'marker-end="url(#{})"/>').format(
+            left(i) + nw + 3, mid_y, left(i + 1) - 3, m_next))
+    w = left(n - 1) + nw + pad
+    h = bot + pad
+    if cyc is None:
+        end = left(n - 1) + nw
+        parts.append(Markup('<path class="viz-ll-next" d="M{:.1f},{:.1f} H{:.1f}" '
+                            'marker-end="url(#{})"/>').format(end + 3, mid_y, end + LL_GAP - 3,
+                                                              m_next))
+        parts.append(Markup('<text class="viz-ll-null" x="{:.1f}" y="{:.1f}" '
+                            'dominant-baseline="central">null</text>').format(
+            end + LL_GAP + 2, mid_y))
+        w = end + LL_GAP + 34 + pad
     else:
-        parts.append(Markup('<span class="viz-end">null</span>'))
-    body = Markup('<div class="viz-scroll"><div class="viz-list{}">{}</div></div>').format(
-        " has-ptr" if ptr else "", Markup("").join(parts))
-    return _figure("list-fig", body, _caption(spec))
+        defs.append(_marker(m_loop, "viz-ll-loop-head"))
+        sy = bot + 1
+        if cyc == n - 1:
+            c = cx(n - 1)
+            d = (f"M{c + 9:.1f},{sy:.1f} C{c + 34:.1f},{sy + LL_LOOP:.1f} "
+                 f"{c - 34:.1f},{sy + LL_LOOP:.1f} {c - 9:.1f},{sy + 2:.1f}")
+        else:
+            a, b = cx(n - 1), cx(cyc)
+            d = (f"M{a:.1f},{sy:.1f} C{a:.1f},{sy + LL_LOOP:.1f} "
+                 f"{b:.1f},{sy + LL_LOOP:.1f} {b:.1f},{sy + 2:.1f}")
+        parts.append(Markup('<path class="viz-back viz-ll-loop" d="{}" marker-end="url(#{})"/>')
+                     .format(d, m_loop))
+        h = sy + LL_LOOP * 0.75 + 4 + pad
+    for i, t in enumerate(texts):
+        x = left(i)
+        g = _cls("viz-ll-node", "viz-hl" if i in hl else "", "viz-null" if vals[i] is None else "")
+        parts.append(Markup(
+            '<g class="{g}"><rect class="viz-ll-box" x="{x:.1f}" y="{y:.1f}" width="{w:.1f}" '
+            'height="{h}" rx="7"/><text class="viz-ll-val" x="{c:.1f}" y="{m:.1f}" '
+            'text-anchor="middle" dominant-baseline="central">{t}</text></g>').format(
+                g=g, x=x, y=top, w=nw, h=LL_H, c=cx(i), m=mid_y, t=t))
+        if cyc is not None:
+            parts.append(Markup('<text class="viz-ll-idx" x="{:.1f}" y="{:.1f}" '
+                                'text-anchor="middle">{}</text>').format(cx(i), top - 5, i))
+    if ptr:
+        defs.append(_marker(m_ptr, "viz-ll-ptr-head"))
+        for i, names in sorted(ptr.items()):
+            label = ", ".join(names)
+            tw = len(label) * LL_PTR_CH + 12
+            c = cx(i)
+            parts.append(Markup(
+                '<g class="viz-ll-ptr"><rect class="viz-ll-tag" x="{x:.1f}" y="{y}" '
+                'width="{w:.1f}" height="17" rx="4"/><text class="viz-ll-ptr-name" x="{c:.1f}" '
+                'y="{ty}" text-anchor="middle" dominant-baseline="central">{t}</text>'
+                '<path class="viz-ll-ptr-line" d="M{c:.1f},{y1} V{y2}" marker-end="url(#{m})"/>'
+                '</g>').format(x=c - tw / 2, y=pad, w=tw, c=c, ty=pad + 8.5, t=label,
+                               y1=pad + 18, y2=top - idx_h - 2, m=m_ptr))
+            w = max(w, c + tw / 2 + pad)
+    if cyc is None:
+        label = "linked list " + ", ".join(texts) + ", then null"
+    else:
+        label = ("linked list " + ", ".join(texts) +
+                 f"; the last node links back to node {cyc} (value {texts[cyc]})")
+    svg = _svg("viz-ll", w, h, label,
+               Markup("<defs>{}</defs>{}").format(Markup("").join(defs), Markup("").join(parts)))
+    body = Markup('<div class="viz-scroll">{}</div>').format(svg)
+    return _figure("list-fig", body, cap)
 
 
 # ---- tree ----------------------------------------------------------------------------------
