@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block body %}
+<h1>{{ r.number }}. {{ r.title }}</h1>
+<dl>
+<dt>Outcome</dt><dd>{{ outcome or "-" }}</dd>
+<dt>Pattern</dt><dd>{{ r.pattern_name or r.pattern or "-" }}</dd>
+<dt>Slot</dt><dd>{{ r.slot or "-" }}</dd>
+<dt>Retry</dt><dd>{{ retry_action or "none" }}</dd>
+</dl>
+<h2>Previous attempts</h2>
+{% if r.previous_attempts %}<table>
+<tr><th>Day</th><th>Min</th><th>Bugs</th><th>Outcome</th></tr>
+{% for a in r.previous_attempts %}<tr><td>{{ a.day }}</td><td>{{ a.actual_min }}</td><td>{{ a.bugs }}</td><td>{{ a.outcome }}</td></tr>{% endfor %}
+</table>{% else %}<p>None.</p>{% endif %}
+<p><a class="btn" href="/dashboard">Dashboard</a> <a class="btn" href="/">Next</a></p>
+{% endblock %}

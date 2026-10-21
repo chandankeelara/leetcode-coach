@@ -1,0 +1,49 @@
+date,problem,name,difficulty,pattern,target_min,actual_min,bugs,outcome
+2026-09-10,560,Subarray Sum Equals K,M,prefix-hashmap,20,17,1,solved
+2026-09-14,875,Koko Eating Bananas,M,binary-search-answer,20,12,0,clean
+2026-09-14,994,Rotting Oranges,M,grid-bfs,20,33,3,solved
+2026-09-14,862,Shortest Subarray Sum at Least K,H,monotonic-deque,40,33,0,abandoned
+2026-09-15,974,Subarray Sums Divisible by K,M,prefix-hashmap,15,11,0,clean
+2026-09-15,200,Number of Islands,M,grid-bfs,20,21,1,solved
+2026-09-16,523,Continuous Subarray Sum,M,prefix-hashmap,15,19,4,solved
+2026-09-16,739,Daily Temperatures,M,monotonic-stack,20,11,1,solved
+2026-09-16,542,01 Matrix,M,grid-bfs,20,25,0,clean
+2026-09-18,1482,Min Days to Make m Bouquets,M,binary-search-answer,18,50,5,solved
+2026-09-18,560,Subarray Sum Equals K,M,prefix-hashmap,12,6,0,clean
+2026-09-18,1011,Capacity To Ship Packages,M,binary-search-answer,16,15,1,solved
+2026-09-21,496,Next Greater Element I,E,monotonic-stack,12,8,0,clean
+2026-09-21,1760,Min Limit of Balls in a Bag,M,binary-search-answer,10,0,0,abandoned
+2026-09-22,994,Rotting Oranges,M,grid-bfs,15,26,1,solved
+2026-09-22,503,Next Greater Element II,M,monotonic-stack,15,8,0,clean
+2026-09-22,102,Binary Tree Level Order,M,trees-bfs,12,4,0,clean
+2026-09-22,239,Sliding Window Maximum,H,monotonic-deque,25,0,0,abandoned
+2026-09-22,3,Longest Substring Without Repeating Characters,M,sliding-window,15,6,0,clean
+2026-09-22,143,Reorder List,M,linked-list,20,0,0,abandoned
+2026-09-24,215,Kth Largest Element in an Array,M,heap,12,14,1,solved
+2026-09-24,56,Merge Intervals,M,intervals,15,9,0,clean
+2026-09-24,33,Search in Rotated Sorted Array,M,binary-search-array,18,13,3,solved
+2026-09-26,523,Continuous Subarray Sum,M,prefix-hashmap,12,14,2,solved
+2026-09-26,200,Number of Islands,M,grid-bfs,12,13,2,solved
+2026-10-04,643,Maximum Average Subarray I,E,sliding-window,8,8,0,clean
+2026-10-04,206,Reverse Linked List,E,linked-list,12,12,0,solved
+2026-10-04,703,Kth Largest Element in a Stream,E,heap,10,15,3,solved
+2026-10-08,199,Binary Tree Right Side View,M,trees-bfs,12,8,0,clean
+2026-10-08,143,Reorder List,M,linked-list,20,60,0,solved
+2026-10-09,98,Validate Binary Search Tree,M,trees-dfs,15,19,0,clean
+2026-10-09,11,Container With Most Water,M,two-pointers,18,17,0,clean
+2026-10-10,209,Minimum Size Subarray Sum,M,sliding-window,15,16,1,solved
+2026-10-10,703,Kth Largest Element in a Stream,E,heap,12,21,0,solved
+2026-10-10,21,Merge Two Sorted Lists,E,linked-list,12,20,0,solved
+2026-10-10,35,Search Insert Position,E,binary-search-array,10,7,0,clean
+2026-10-12,103,Binary Tree Zigzag Level Order,M,trees-bfs,15,9,0,clean
+2026-10-12,438,Find All Anagrams in a String,M,sliding-window,18,19,0,clean
+2026-10-12,57,Insert Interval,M,intervals,18,15,0,solved
+2026-10-12,236,Lowest Common Ancestor of a Binary Tree,M,trees-dfs,20,21,0,solved
+2026-10-12,973,K Closest Points to Origin,M,heap,20,13,0,clean
+2026-10-12,1091,Shortest Path in Binary Matrix,M,grid-bfs,25,26,4,solved
+2026-10-18,236,Lowest Common Ancestor of a Binary Tree,M,trees-dfs,15,7,0,clean
+2026-10-18,994,Rotting Oranges,M,grid-bfs,12,9,0,clean
+2026-10-18,523,Continuous Subarray Sum,M,prefix-hashmap,12,14,0,clean
+2026-10-18,57,Insert Interval,M,intervals,12,17,2,solved
+2026-10-18,1482,Min Days to Make m Bouquets,M,binary-search-answer,20,20,0,clean
+2026-10-21,424,Longest Repeating Character Replacement,M,sliding-window,15,23,3,solved

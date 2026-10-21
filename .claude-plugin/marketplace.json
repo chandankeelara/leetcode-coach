@@ -1,0 +1,12 @@
+{
+  "name": "leetcode-coach-local",
+  "owner": { "name": "virtual457" },
+  "description": "Local marketplace for the personal LeetCode coach.",
+  "plugins": [
+    {
+      "name": "leetcode-coach",
+      "source": "./",
+      "description": "Daily interview-prep coaching session: /coach skill plus the MCP bridge."
+    }
+  ]
+}

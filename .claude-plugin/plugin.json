@@ -1,0 +1,23 @@
+{
+  "name": "leetcode-coach",
+  "displayName": "LeetCode Coach",
+  "version": "0.1.0",
+  "description": "Daily interview-prep coaching session: /coach skill plus the MCP bridge to the coach website.",
+  "author": { "name": "virtual457" },
+  "license": "UNLICENSED",
+  "keywords": ["leetcode", "coaching", "interview-prep"],
+  "skills": ["./bridge/skills/"],
+  "mcpServers": {
+    "coach": {
+      "type": "stdio",
+      "command": "${CLAUDE_PLUGIN_ROOT}/.venv/Scripts/python.exe",
+      "args": ["-m", "bridge.server"],
+      "env": {
+        "PYTHONPATH": "${CLAUDE_PLUGIN_ROOT}",
+        "COACH_DB": "${CLAUDE_PLUGIN_ROOT}/coach.db"
+      },
+      "timeout": 1800000,
+      "alwaysLoad": true
+    }
+  }
+}

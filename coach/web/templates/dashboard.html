@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% macro tree(d) %}
+{% if d is mapping %}<dl>{% for k, v in d.items() %}<dt>{{ k }}</dt><dd>{{ tree(v) }}</dd>{% endfor %}</dl>
+{% elif d is iterable and d is not string %}<ul>{% for v in d %}<li>{{ tree(v) }}</li>{% endfor %}</ul>
+{% elif d is float %}{{ "%.2f"|format(d) }}{% else %}{{ d }}{% endif %}
+{% endmacro %}
+{% block body %}
+<h1>Dashboard</h1>
+{% set b = st.backlog %}
+<h2>Backlog</h2>
+<p>{{ b.backlog }} owed. Today: {{ b.done_today }} / {{ b.target_today }}, {{ b.remaining }} left.</p>
+<h2>Streak</h2>
+<p>{{ st.streak.current }} now, {{ st.streak.longest }} best.</p>
+<div class="bars">{% for d in st.streak.last14 %}<i class="{{ 'on' if d else '' }}"></i>{% endfor %}</div>
+<h2>Tier-1</h2>
+{% for t in st.tier1 %}{% set need = t.need or t.needed or 3 %}
+<div class="bar"><span>{{ t.pattern }}</span><meter min="0" max="{{ need }}" value="{{ t.clean }}"></meter> {{ t.clean }}/{{ need }} {{ t.tag or t.status or "" }}</div>
+{% endfor %}
+{% if st.tier2_open %}<p>Tier-2 open: {{ st.tier2_open|join(", ") }}</p>{% endif %}
+<h2>Retry due</h2>
+{% for r in st.retry_due %}{% if r.due %}<p>{{ r.number or r.problem_number }} {{ r.title }} (age {{ r.age }}, wait {{ r.wait }})</p>{% endif %}{% else %}<p>None.</p>{% endfor %}
+<h2>Re-fire due</h2>
+{% for r in st.refire_due %}{% if r.due is not defined or r.due %}<p>{{ r.pattern or r }}</p>{% endif %}{% else %}<p>None.</p>{% endfor %}
+<h2>Weakest</h2>
+{% for w in st.weakest %}<p>{{ w.name }} L{{ w.level }} {{ w.trend or "" }}</p>{% endfor %}
+<h2>Strengths</h2>
+{% for w in st.strengths %}<p>{{ w.name }} L{{ w.level }} {{ w.trend or "" }}</p>{% else %}<p>None yet.</p>{% endfor %}
+{% if st.clean_rate is not none %}<p>Clean rate: {{ st.clean_rate }}</p>{% endif %}
+<h2>Report card, {{ report_date }}</h2>
+{{ tree(rep) }}
+<p><a class="btn" href="/">Next</a></p>
+{% endblock %}

@@ -1,0 +1,2 @@
+<span class="ok">Submitted.</span>
+{% if found %}<ul class="lint">{% for f in found %}<li>line {{ f.line }}: {{ f.kind }} {{ f.msg }}</li>{% endfor %}</ul>{% else %}<span class="ok"> Lint clean.</span>{% endif %}

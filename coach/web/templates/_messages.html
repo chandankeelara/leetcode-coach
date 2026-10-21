@@ -1,0 +1,2 @@
+{% for m in msgs %}<div class="msg {{ m.role }}"><b>{{ m.role }}</b> {{ m.content }}</div>{% endfor %}
+{% if poll %}<div id="poll" hx-get="/messages?since={{ last }}" hx-trigger="every 2s" hx-target="#poll" hx-swap="outerHTML" style="display:none"></div>{% endif %}

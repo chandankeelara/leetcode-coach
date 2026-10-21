@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block body %}
+<h1>{{ h.number }}. {{ h.title }}</h1>
+<p><a href="{{ h.leetcode_url }}" target="_blank" rel="noopener noreferrer">Open on leetcode.com</a></p>
+{% if h.paraphrase %}<p class="para">{{ h.paraphrase }}</p>{% endif %}
+<p class="timer"><span id="t" data-elapsed="{{ elapsed }}">00:00</span> / target {{ h.target_min }} min</p>
+<p>{{ h.instruction }}</p>
+
+<h2>Approach in plain words</h2>
+<form hx-post="/solve/approach" hx-target="#a-res" hx-on::after-request="if(event.detail.successful)this.reset()">
+<textarea name="approach" rows="4" required></textarea>
+<button>Send</button> <span id="a-res"></span>
+</form>
+
+<h2>Code</h2>
+<form hx-post="/solve/submit" hx-target="#c-res">
+<textarea name="code" rows="12" class="code" spellcheck="false" required></textarea>
+<label>Result
+<select name="verdict">{% for v in verdicts %}<option>{{ v }}</option>{% endfor %}</select></label>
+<button>Submit</button>
+<div id="c-res"></div>
+</form>
+
+<div class="row">
+<form hx-post="/solve/stuck" hx-target="#s-res"><button class="alt">I'm stuck</button> <span id="s-res"></span></form>
+<form method="post" action="/solve/abandon"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="alt">Skip / abandon</button></form>
+</div>
+
+<h2>Chat</h2>
+<div id="chat">{% set poll = false %}{% include "_messages.html" %}</div>
+<div id="poll" hx-get="/messages?since={{ last }}" hx-trigger="every 2s" hx-target="#poll" hx-swap="outerHTML" style="display:none"></div>
+<form hx-post="/solve/chat" hx-swap="none" hx-on::after-request="this.reset()">
+<input name="text" autocomplete="off" required><button>Say</button>
+</form>
+
+<p><a class="btn" href="/log">Log attempt</a></p>
+<script>
+(function(){var el=document.getElementById('t'),s=+el.dataset.elapsed,t0=Date.now();
+function f(){var n=s+Math.floor((Date.now()-t0)/1000),m=Math.floor(n/60);
+el.textContent=String(m).padStart(2,'0')+':'+String(n%60).padStart(2,'0');}
+f();setInterval(f,1000);})();
+</script>
+{% endblock %}
