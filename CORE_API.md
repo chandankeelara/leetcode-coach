@@ -7,10 +7,21 @@ Each function opens its own DB session and commits. DB path: env `COACH_DB`
 
 ## RULE ZERO
 
-Only `next_problem()` and `reveal()` carry problem data, and both are safe:
+The coach chooses each problem (`hand_out`), so the coach knows the pattern; the learner never
+sees it before logging:
 
-* `next_problem()` returns the `Handoff` DTO. It has no pattern, slot, tier, difficulty or
-  progress field (`extra="forbid"`, a test pins the field set).
+* `hand_out()` and `next_problem()` return the `Handoff` DTO. It has no pattern, slot, tier,
+  difficulty or progress field (`extra="forbid"`, a test pins the field set). The coach's
+  `why` is stored privately (`handouts.pick_reason`) and only comes back after logging.
+* Every coach-authored text is refused with `ValueError("leak: names the open problem's
+  pattern")` while it names the OPEN problem's pattern (name, slug, synonyms:
+  `service._PATTERN_SYNONYMS`) and he has not named it himself (his chat, approach, chat /
+  submission events, code draft, box replies for that handout). Covers `post_message(role=
+  "coach")` (so the bridge's `say`), `set_statement`, `show_visual`, `clock(phase)`, the editor
+  tools (annotate, highlight, add_comment, scratch, set_stub) and `set_tests` labels. Only
+  while the handout is open: after `log_attempt` the post-mortem may name it. A different
+  pattern's name is not this guard's business (the older `leak_words` guard on statements,
+  visuals, boxes and labels still refuses every technique word there).
 * `reveal()` raises `RevealBlocked` until the attempt for that handout is logged.
 * `status()` and `report()` are PROGRESS talk. Never render them on the same screen as a
   handoff, nor in the message just before one. The UI shows them on `/dashboard` only after
@@ -54,10 +65,54 @@ default_user_id() -> int | None                             # the first (only) u
 start_session(user_id: int, today: date | None = None, label: str | None = None) -> int  # session_id
 end_session(session_id: int, log_md: str | None = None) -> int
 
-# the handoff
+# plans (coach/plans.py): one active plan per user; the coach picks by it
+get_plan(user_id, today=None) -> dict | None
+#   {id, user_id, title, target_date, days_left, daily_problems, minutes_per_day,
+#    focus_patterns: [slug], phases: [{name, start, end, rules}], current_phase | None,
+#    hards_from | None (None = no Hards), hards_allowed, notes, active, created_at, updated_at}
+set_plan(user_id, today=None, **fields) -> dict     # create or update; fields: title,
+#   target_date, daily_problems 1..20, minutes_per_day 10..600, focus_patterns, phases,
+#   hards_from, notes. ValueError on a bad value / unknown pattern / unknown field.
+pattern_choices() -> [{slug, name, tier}]           # the focus checkboxes
+#   db.init runs plans.migrate_legacy: a user with attempts and no plan row gets PLAN.md
+#   (target 2026-12-15, 2/day, 90 min, Tier 1 + Tier 2, phases A/B/C, Hards from 2026-11-01).
+#   A brand-new user has none: the web sends him to /onboarding. The backlog's per-day count
+#   is the plan's daily_problems (config per_day without a plan); backlog_start stays config.
+
+# the coach's read tools (coach/picks.py), all scoped to user_id
+get_profile(user_id, today=None) -> {today, plan, ledger: [{name, kind, pattern, level, trend,
+    evidence, updated_on}], patterns: {slug: {name, tier, in_focus, level, clean, attempts,
+    owned, last_attempt_day, retired_on, refires}}, recent_attempts: [20 newest: {day,
+    number, title, pattern, outcome, target_min, actual_min, bugs, hints, optimal,
+    derived_cold, notes}], backlog, streak, clean_rate}
+get_due(user_id, today=None) -> {today, retry_due: [{problem_number, title, pattern,
+    attempts, age, wait, last_on, reason, blocked, block_reason, overdue_days}],
+    retry_waiting: [... due_in_days], refire_due: [{pattern, age, refires_done, last_touch,
+    new_variants}], blocklist: [n], today_done, today_target, open_handout_id}
+find_problems(user_id, pattern=None, tier=None, untouched=None, difficulty=None, limit=20,
+              today=None) -> [{number, title, difficulty, pattern, tier, source, bank_order,
+    attempts, last_attempt_day, clean_count, in_retry, blocked, block_reason}]
+#   bank order then E -> M -> H, blocked rows last. blocked = hand_out would refuse it now.
+
+# the handoff: the coach picks
+hand_out(user_id, number, target_min=None, mode="coached", why="", today=None) -> Handoff
+#   raises PickRefused (a ValueError) and writes nothing when: another handout from today is
+#   open; the problem was attempted or handed out (skipped too) in the last 7 days; it has 3
+#   clean solves (retired); it is a Hard and the plan's hards_from is None or later (no plan:
+#   config hards_from); its pattern is burned this session; unknown number; mode not
+#   timed|coached; target_min not 1..180. On success: handout stamped now by the server,
+#   clock started, `why` -> handouts.pick_reason, `mode` -> handouts.mode, slot inferred
+#   (retry | refire | growth | warmup | drill) for reveal and the log, emits `handout`.
+#   target_min None = target_for (80% of the first attempt's target on a repeat, else E10 M15
+#   H35).
+skip_open(user_id) -> {"ok", "handout_id"}           # skip the open handout (still blocks 7 days)
+request_next(user_id, source="web") -> int           # queue ONE `next_requested` for the coach
+
+# FALLBACK picker (coach/picker.py): the page's "Use the default pick", bridge next_problem
 next_problem(user_id: int, today: date | None = None, force_new: bool = False) -> Handoff | None
 #   an open handout from today is returned again (same id and start time);
 #   force_new=True marks it skipped and picks again. None = nothing passes the filters.
+#   Honours the plan's hards_from like hand_out.
 skip_problem(handout_id: int) -> None                       # status -> skipped; still blocks 7 days
 reset_timer(user_id: int, handout_id: int) -> dict          # {"ok","handout_id","started_at"}
 #   alias of clock(..., "reset", reason="reset"); also emits `handout`.
@@ -92,7 +147,8 @@ log_attempt(user_id: int, handout_id: int | None = None, number: int | None = No
 #   appends to its refires.
 
 reveal(handout_id: int) -> dict                             # raises RevealBlocked until logged
-#   -> {"handout_id","number","title","slot","mode","pattern","pattern_name","tier"}
+#   -> {"handout_id","number","title","slot","mode","picked_by": coach|server,"why",
+#       "pattern","pattern_name","tier", "clock"}
 #   a re-fire handout adds "trap_quiz": {"pattern", "cues": [{"cue", "trap"}]}, parsed by
 #   rules.parse_traps from pattern_state.note_md: top-level bullets under a heading starting
 #   "Traps" / "Where it bites" / "Pitfalls" / "Gotchas"; `cue -> rule` splits; [] if none.
@@ -119,7 +175,8 @@ session_summary(user_id, today=None) -> dict
 #   {"today","session_id","problems":[{handout_id,number,title,handed_at,target_min,status,
 #     mode,attempt|None,reveal|None}],"attempts_without_handout","skill_changes":[{name,level,
 #     evidence}],"retry":{"added","cleared","bumped"},"trap_recall":[...]}
-#   reveal (slot, pattern, pattern_name, tier) only for LOGGED handouts. Progress talk.
+#   reveal (slot, pattern, pattern_name, tier, picked_by, why) only for LOGGED handouts.
+#   Progress talk.
 
 set_statement(user_id: int, handout_id: int, text: str) -> dict   # {"ok", "handout_id", "number"}
 #   coach-written statement, stored in problems.paraphrase (overwrites), returned in Handoff.paraphrase.
@@ -192,7 +249,7 @@ Exception: `service.RevealBlocked`.
 * `coach.db`: `init(path=None)`, `session_scope()` (context manager), `new_session()`,
   `add_missing_columns(engine)`: run by `init`; adds model columns an existing sqlite file
   lacks (additive, nullable only). First use: `skills.updated_on`.
-* `coach.models`: all tables (users, patterns, problems, attempts, handouts, sessions, skills,
+* `coach.models`: all tables (users, plans, patterns, problems, attempts, handouts, sessions, skills,
   skill_events, retry_items, pattern_state, burned, oa_sims, trap_recall, config, events,
   coach_messages, visuals, ui_events).
 * `coach.lint.lint(src) -> [(line, kind, msg)]`, kinds USELESS, NONE-ASSIGN, COST, ALIAS, SYNTAX.
@@ -202,6 +259,13 @@ Exception: `service.RevealBlocked`.
 * `coach.picker.pick_next(session, user_id, today)` is the lower level; prefer `next_problem`.
 
 ## MCP bridge tools (`bridge/server.py`)
+
+Choosing: `get_profile()`, `get_due()`, `find_problems(pattern, tier, untouched, difficulty,
+limit)` -> {candidates}, `hand_out(number, target_min=None, mode="coached", why="")` ->
+handoff | {error} (posts the handoff text and "Statement coming." like next_problem),
+`skip_problem()` -> {ok, handout_id} | {error}. `next_problem` is the FALLBACK pick.
+`say` is pre-checked with `service.check_coach_text`: a RULE ZERO refusal returns
+{error, posted: false} before any clock action.
 
 `coach_status`, `next_problem`, `set_statement`, `wait_for_event`, `say`, `log_attempt`,
 `reveal`, `burn_pattern`, `lint`, `report`, and (new) `log_trap_recall`, `record_refire`,
@@ -214,6 +278,23 @@ on a clock error nothing is posted) (all act on the open handout). Chat side eff
 * `next_problem` posts the handoff text (never the mode), then "Statement coming." when
   `paraphrase` is null.
 * `set_statement` posts the statement to the chat on success (nothing on a leak refusal).
+
+## Web: Next problem, plan, onboarding
+
+* `POST /solve` (Next problem) never picks. Coach online: `request_next` queues one
+  `next_requested` event, then `/next`. Offline: straight to `/next`. Open handout: `/solve`.
+* `GET /next` is the neutral waiting page: "Your coach is choosing your next problem…". It
+  follows the coach's `handout` ui_event to `/solve` (live stream, same as the interstitial).
+  Offline (or the coach drops while waiting): the connect steps, "Ask my coach" (POST /solve
+  again) and "Use the default pick" (`POST /solve/default` = `next_problem`, pushes the
+  `handout` event {source: "web"} to the coach queue as before). `?none=1`: nothing eligible.
+* `/onboarding` (GET/POST): a user without a plan is sent here from `/`, `/dashboard`,
+  `/plan` and `POST /solve`. Fields: target date, problems a day, minutes a day, focus
+  checkboxes, when to allow Hards (from the start | from a date | not yet).
+* `/plan` (GET/POST, `?saved=1`): view / edit the plan (also title, phases one per line
+  `name | start | end | rules`, notes). Linked from the dashboard only; like the dashboard it
+  redirects to `/solve` while a problem is open.
+* `/reveal/{id}` shows the coach's `why` ("Why your coach picked it").
 
 ## Web: visuals
 
@@ -259,8 +340,8 @@ python -m coach.cli reveal HANDOUT_ID
 
 ## Notes for the builders
 
-* Slot order per session is warm-up, drill, growth, retry, cycling by the number of handouts in
-  the open session; a slot with no candidate falls through to the next.
+* Fallback picker only: slot order per session is warm-up, drill, growth, retry, cycling by
+  the number of handouts in the open session; a slot with no candidate falls through.
 * A session is opened lazily (`next_problem`, `burn_pattern`, `start_session`) for `today`;
   burned patterns are per session. Call `end_session` to close one.
 * Imported history has `attempts.source = "import"`; new rows are `"app"`. Re-running the

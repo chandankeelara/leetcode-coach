@@ -39,6 +39,8 @@ escaped first; until it exists the card says the coach is writing it and `solve.
 The thing being measured is whether the learner recognises the pattern himself. So:
 
 - `/` (when nothing is open) is a neutral interstitial: one button, no numbers, no progress.
+  The button asks the coach, who picks by the learner's plan (`/next` waits neutrally; offline
+  it offers the default pick). A new user sets up the plan at `/onboarding` first.
 - `/solve` and `/log` show only the problem: number, title, link, paraphrase, timer, target,
   instruction, chat. No pattern, slot, tier, difficulty, backlog or streak.
 - Progress lives only on `/dashboard`, which redirects to `/solve` while a problem is open.

@@ -341,3 +341,14 @@ def test_hand_out_tool_real_db(real):
     assert set(server.hand_out(502)) == HANDOFF_KEYS
     assert "last 7 days" in server.find_problems(pattern="sliding-window")["candidates"][-1][
         "block_reason"]
+
+
+def test_skill_md_coach_chooses():
+    import os
+    path = os.path.join(os.path.dirname(server.__file__), "skills", "coach", "SKILL.md")
+    text = open(path, encoding="utf-8").read()
+    sec = text.split("### Choosing the next problem", 1)[1].split("\n### ", 1)[0]
+    assert len(sec.strip().splitlines()) <= 30
+    for tool in ("get_profile", "get_due", "find_problems", "hand_out", "next_requested"):
+        assert tool in text
+    assert "say the server picks" not in text

@@ -9,6 +9,18 @@ plumbing, not of schema. RULE ZERO (never leak the pattern to the learner) is en
 `Handoff` DTO and the page rules. That is the main thing that sets this apart from a problem
 list.
 
+## Who picks the problem
+The coach does. Each learner has a plan (target date, problems and minutes a day, focus
+areas, phases, when Hards open), set at onboarding and editable from the dashboard. When he
+presses Next problem the page asks the coach and waits; the coach reads his plan, skill
+ledger, per-pattern record, due retries and re-fires through the server (`get_profile`,
+`get_due`, `find_problems`) and hands one out with a one-line private reason. The server
+still owns the hard rules and refuses a pick that breaks one (7-day repeat, retired, Hards
+before the plan allows, burned pattern, one problem open), stamps the clock, and keeps RULE
+ZERO: the handoff carries no pattern, the reason shows only after logging, and any coach text
+naming the open problem's pattern is refused until the learner names it. Without a coach the
+old slot picker remains as a "default pick" so nobody is stuck.
+
 ## Steps
 
 1. **Personal, stable (now).** Cutover from the markdown repo, daily backups, phone-width check.
