@@ -8,7 +8,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from fastapi import FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from itsdangerous import BadSignature, URLSafeTimedSerializer
@@ -68,6 +68,62 @@ def msgfmt(text):
     return Markup("".join(out))
 
 
+_HEAD = re.compile(r"^(#{1,4})\s+(.*)$")
+_BULLET = re.compile(r"^\s*[-*]\s+(.*)$")
+
+
+def _inline(line):
+    t = html.escape(line)
+    t = _TICK.sub(r"<code>\1</code>", t)
+    return _BOLD.sub(r"<strong>\1</strong>", t)
+
+
+def mdblock(text):
+    """Escape first, then light markdown: headings, paragraphs, bullets, `code`, **bold**,
+    fenced code blocks. Never emits anything but the tags below."""
+    out, para, items, code = [], [], [], None
+
+    def flush():
+        if para:
+            out.append("<p>" + "<br>".join(_inline(x) for x in para) + "</p>")
+            para.clear()
+        if items:
+            out.append("<ul>" + "".join(f"<li>{_inline(x)}</li>" for x in items) + "</ul>")
+            items.clear()
+
+    for line in (text or "").replace("\r\n", "\n").split("\n"):
+        if code is not None:
+            if line.strip().startswith("```"):
+                out.append("<pre><code>" + html.escape("\n".join(code)) + "</code></pre>")
+                code = None
+            else:
+                code.append(line)
+            continue
+        if line.strip().startswith("```"):
+            flush()
+            code = []
+            continue
+        m = _HEAD.match(line)
+        b = _BULLET.match(line)
+        if m:
+            flush()
+            out.append(f"<h4>{_inline(m.group(2))}</h4>")
+        elif b:
+            if para:
+                flush()
+            items.append(b.group(1))
+        elif not line.strip():
+            flush()
+        else:
+            if items:
+                flush()
+            para.append(line.strip())
+    if code is not None:
+        out.append("<pre><code>" + html.escape("\n".join(code)) + "</code></pre>")
+    flush()
+    return Markup("".join(out))
+
+
 def hhmm(iso):
     try:
         return datetime.fromisoformat(str(iso)).strftime("%H:%M")
@@ -83,6 +139,7 @@ def pname(slug):
 
 
 templates.env.filters["msgfmt"] = msgfmt
+templates.env.filters["mdblock"] = mdblock
 templates.env.filters["pname"] = pname
 templates.env.filters["hhmm"] = hhmm
 
@@ -278,6 +335,16 @@ async def abandon(request: Request):
     h = service().current_handout(sess["uid"])
     service().push_event(sess["uid"], "abandon", {"handout_id": h.handout_id if h else None})
     return go("/log?abandoned=1")
+
+
+@app.get("/statement")
+async def statement(request: Request):
+    """The coach-written statement of the open problem, rendered; polled until it exists."""
+    sess = require(request)
+    h = service().current_handout(sess["uid"])
+    text = getattr(h, "paraphrase", None) if h else None
+    return JSONResponse({"handout_id": h.handout_id if h else None,
+                         "html": str(mdblock(text)) if text else ""})
 
 
 @app.get("/messages", response_class=HTMLResponse)

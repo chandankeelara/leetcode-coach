@@ -93,6 +93,7 @@ def test_clean_handoff_rejects_missing_keys():
 def test_tool_descriptions_do_not_leak():
     tools = asyncio.run(server.mcp.list_tools())
     blob = json.dumps([t.description for t in tools]).lower()
+    blob = blob.replace("a technique or a difficulty", "")     # set_statement's own wording
     for word in ("two-pointer", "sliding", "hashmap", "binary search", "heap", "dfs", "bfs",
                  "tier 1", "difficulty"):
         assert word not in blob
@@ -148,3 +149,30 @@ def test_say_stores_coach_message_real_db(real):
 def test_lint_flags_noop():
     hits = server.lint("def f(g):\n    g[0] == 1\n    return g\n")["hits"]
     assert hits and hits[0]["line"] == 2
+
+
+# ---- set_statement -------------------------------------------------------------------------
+def test_set_statement_tool_ok_and_leak_real_db(real):
+    service, uid = real
+    from coach import db
+    from coach.models import Handout, Pattern, Problem
+    with db.session_scope() as s:
+        s.add(Pattern(slug="two-pointers", name="Two Pointers", tier=1))
+        s.add(Problem(number=5, title="Pair Sum", lc_slug="pair-sum", difficulty="E",
+                      pattern_slug="two-pointers", source="bank"))
+        s.flush()
+        h = Handout(user_id=uid, problem_number=5, slot="drill", target_min=10)
+        s.add(h)
+        s.flush()
+        hid = h.id
+    r = server.set_statement(hid, "Use two pointers on the sorted array.")
+    assert r["error"].startswith("leak:") and "two pointers" in r["error"]
+    assert service.get_statement(hid) is None
+    assert server.set_statement(hid, "Return indices of two numbers adding to target.") == {"ok": True}
+    assert service.get_statement(hid).startswith("Return indices")
+
+
+def test_set_statement_tool_described_without_leaks():
+    tools = {t.name: t for t in asyncio.run(server.mcp.list_tools())}
+    assert "set_statement" in tools
+    assert "Rejected if it names a technique or a difficulty" in tools["set_statement"].description

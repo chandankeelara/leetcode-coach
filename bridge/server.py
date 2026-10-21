@@ -173,6 +173,16 @@ def next_problem(new: bool = False) -> dict:
     return h
 
 
+@mcp.tool()
+def set_statement(handout_id: int, text: str) -> dict:
+    """Write the problem statement, examples and constraints in your own words. Rejected if it names a technique or a difficulty."""
+    try:
+        svc().set_statement(uid(), handout_id, text)
+    except ValueError as e:
+        return {"error": str(e)}
+    return {"ok": True}
+
+
 async def _wait(timeout_s, ctx=None):
     if _pending:
         return _pending.popleft()

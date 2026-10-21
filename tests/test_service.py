@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import select
 
 from coach import db, service
-from coach.models import Attempt, Handout, PatternState, RetryItem
+from coach.models import Attempt, Handout, PatternState, Problem, RetryItem
 
 TODAY = date(2026, 10, 21)
 
@@ -157,3 +157,60 @@ def test_report_runs_on_service_data(world):
     service.log_attempt(world, handout_id=h.handout_id, actual_min=5, day=TODAY)
     card = service.report(world, "2026-12-15", today=TODAY)
     assert card["throughput"]["completed"] == 1
+
+
+# ---- coach-written statement -------------------------------------------------------------
+GOOD = ("Given an array of integers nums and an integer k, return the number of subarrays "
+        "whose sum equals k.")
+
+
+def _handout_for(world, number):
+    with db.session_scope() as s:
+        if s.get(Problem, number) is None:
+            s.add(Problem(number=number, title="Pair Sum", lc_slug="pair-sum", difficulty="E",
+                          source="attempt"))
+            s.flush()
+        h = Handout(user_id=world, problem_number=number, slot="drill", target_min=15)
+        s.add(h)
+        s.flush()
+        return h.id
+
+
+@pytest.mark.parametrize("bad", ["use a sliding window", "Hard", "a Two-Pointers walk",
+                                 "keep a hash-map of counts", "Prefix  Sum", "try DP",
+                                 "a min Heap", "BFS it", "binary-search the answer"])
+def test_statement_leak_guard_rejects(world, bad):
+    hid = _handout_for(world, 7)
+    with pytest.raises(ValueError, match="leak"):
+        service.set_statement(world, hid, GOOD + " " + bad)
+    assert service.get_statement(hid) is None
+
+
+def test_statement_stored_and_overwritten(world):
+    hid = _handout_for(world, 7)
+    assert service.set_statement(world, hid, GOOD)["ok"]
+    assert service.get_statement(hid) == GOOD
+    service.set_statement(world, hid, GOOD + " Constraints: n <= 10.")
+    assert service.get_statement(hid).endswith("n <= 10.")
+    assert service.next_problem(world, today=TODAY) is not None
+
+
+def test_statement_reaches_handoff(world):
+    h = service.next_problem(world, today=TODAY)
+    assert h.paraphrase is None
+    service.set_statement(world, h.handout_id, GOOD)
+    again = service.next_problem(world, today=TODAY)     # same open handout
+    assert again.handout_id == h.handout_id and again.paraphrase == GOOD
+
+
+def test_statement_title_words_allowed(world):
+    with db.session_scope() as s:
+        s.add(Problem(number=206, title="Reverse Linked List", lc_slug="reverse-linked-list",
+                      difficulty="E", source="attempt"))
+    hid = _handout_for(world, 206)
+    service.set_statement(world, hid, "Reverse a singly linked list and return its head.")
+    with pytest.raises(ValueError, match="stack"):
+        service.set_statement(world, hid, "Reverse a linked list, maybe with a stack.")
+    other = _handout_for(world, 8)
+    with pytest.raises(ValueError, match="linked list"):
+        service.set_statement(world, other, "Reverse a linked list.")

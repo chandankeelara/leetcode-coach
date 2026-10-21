@@ -17,6 +17,17 @@ first run. `COACH_DB` picks the SQLite file (default `./coach.db`).
 
 Tests: `.venv/Scripts/python -m pytest`
 
+## Coach-written statements
+
+The statement on `/solve` is not scraped from LeetCode. When a handout's `paraphrase` is empty the
+coach (Claude, through the bridge's `set_statement` tool) writes the statement, examples and
+constraints in its own words; it is stored on the problem and reused next time. `set_statement`
+refuses text that names a technique (any pattern name plus synonyms like "sliding window" or
+"heap") or a difficulty, except words the problem's own title contains ("Reverse Linked List").
+`/solve` shows a Statement card above the approach box, rendered as light markdown with HTML
+escaped first; until it exists the card says the coach is writing it and `solve.js` polls
+`GET /statement` (JSON `{handout_id, html}`).
+
 ## RULE ZERO: page rules
 
 The thing being measured is whether the learner recognises the pattern himself. So:

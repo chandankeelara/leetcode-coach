@@ -23,9 +23,12 @@
 
   <div class="ws">
     <div class="ws-main">
-      {% if h.paraphrase %}
-      <div class="card para">{{ h.paraphrase }}</div>
-      {% endif %}
+      <div class="card stmt" id="stmt">
+        <div class="card-head"><h2 class="card-title">Statement</h2></div>
+        <div class="stmt-body" id="stmt-body" {% if not h.paraphrase %}data-pending="1"{% endif %}>
+          {% if h.paraphrase %}{{ h.paraphrase|mdblock }}{% else %}<p class="muted">Your coach is writing the statement…</p>{% endif %}
+        </div>
+      </div>
 
       <div class="card appr" id="appr">
         <div class="card-head">

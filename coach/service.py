@@ -7,6 +7,7 @@ until the attempt is logged. `status()` and `report()` are progress talk: the UI
 show them in the same screen/message as a problem handoff.
 """
 import asyncio
+import re
 from datetime import date, datetime, timedelta
 
 from argon2 import PasswordHasher
@@ -149,6 +150,85 @@ def skip_problem(handout_id):
         h = s.get(Handout, handout_id)
         if h.status == "open":
             h.status = "skipped"
+
+
+# ---- the statement (written by the coach, stored on the problem) ----------------------------
+# Words that would name a technique or a difficulty. Pattern names/slugs come from the patterns
+# table; these are the synonyms. Each is a regex over lowercase text; spaces/hyphens are loose.
+_SEP = r"[\s\-_]*"
+_LEAK_SYNONYMS = [
+    "two pointers?", "sliding window", "prefix sum", "hash map", "heap", "priority queue",
+    "bfs", "dfs", "binary search", "monotonic", "deque", "stack", r"backtrack(?:ing)?",
+    "dynamic programming", "dp", r"memo(?:ization|ize|ised|ized)?", "topological", "union find",
+    "dsu", "trie", "greedy", "linked list", "easy", "medium", "hard",
+]
+
+
+def _term_regex(words_or_regex, is_regex=False):
+    if is_regex:
+        body = words_or_regex.replace(" ", _SEP)
+    else:
+        body = _SEP.join(re.escape(w) for w in re.split(r"[\s\-_]+", words_or_regex.strip()) if w)
+    return re.compile(rf"(?<![a-z0-9])(?:{body})(?:e?s)?(?![a-z0-9])")
+
+
+def _leak_terms(s):
+    """{display: compiled regex} for every pattern name/slug and synonym."""
+    terms = {}
+    names = set(rules.CORE)
+    for slug, name in s.execute(select(Pattern.slug, Pattern.name)):
+        names.update((slug, name))
+    # Domain words, not techniques: a statement about meeting rooms has to say "intervals".
+    names -= {"intervals", "Intervals"}
+    for n in names:
+        key = re.sub(r"[\s\-_]+", " ", n.lower()).strip()
+        if key:
+            terms.setdefault(key, _term_regex(key))
+    for syn in _LEAK_SYNONYMS:
+        terms.setdefault(syn.replace("?", "").replace("(?:", "").replace(")", "").replace("|", "/"),
+                         _term_regex(syn, True))
+    return terms
+
+
+def leak_words(text, title, s):
+    """Technique / difficulty words in `text`. A term the problem's own title contains is fine
+    (the title is shown anyway: 'Reverse Linked List' may say 'linked list')."""
+    low = (text or "").lower()
+    low_title = (title or "").lower()
+    hits = []
+    for display, rx in _leak_terms(s).items():
+        m = rx.search(low)
+        if m and not rx.search(low_title):
+            hits.append(m.group(0).strip())
+    return sorted(set(hits))
+
+
+def set_statement(user_id, handout_id, text):
+    """Store the coach-written statement on the handout's problem (overwrites). Raises
+    ValueError('leak: ...') naming the offending words and stores nothing when the text names a
+    technique or a difficulty. Returns {"ok": True, "handout_id", "number"}."""
+    text = (text or "").strip()
+    if not text:
+        raise ValueError("empty statement")
+    with session_scope() as s:
+        h = s.get(Handout, handout_id)
+        if h is None or h.user_id != user_id:
+            raise ValueError(f"no handout {handout_id}")
+        p = s.get(Problem, h.problem_number)
+        bad = leak_words(text, p.title, s)
+        if bad:
+            raise ValueError("leak: " + ", ".join(bad))
+        p.paraphrase = text
+        return {"ok": True, "handout_id": h.id, "number": p.number}
+
+
+def get_statement(handout_id):
+    """The stored statement of a handout's problem, or None."""
+    with session_scope() as s:
+        h = s.get(Handout, handout_id)
+        if h is None:
+            return None
+        return s.get(Problem, h.problem_number).paraphrase
 
 
 # ---- logging -------------------------------------------------------------------------------

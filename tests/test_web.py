@@ -182,3 +182,24 @@ def test_solve_chat_starts_at_handout(env):
     html = c.get("/solve").text
     assert "sliding window" not in html and ">go<" in html
     assert 'data-last="2"' in html
+
+
+def test_solve_statement_card_and_poll(env):
+    c, fake = env
+    login(c)
+    start(c)
+    html = c.get("/solve").text
+    assert "Your coach is writing the statement" in html and 'data-pending="1"' in html
+    assert c.get("/statement").json()["html"] == ""
+    fake.h.paraphrase = ("## Task\nGiven `nums` and `k`, count <b>subarrays</b> summing to k.\n\n"
+                         "- Input: [1,1,1], 2 -> 2\n- Input: [1,2,3], 3 -> 2\n\n"
+                         "```python\ndef f(nums: list[int], k: int) -> int:\n```")
+    html = c.get("/solve").text
+    assert "<h4>Task</h4>" in html and "<code>nums</code>" in html and "<li>" in html
+    assert "<pre><code>def f(" in html
+    assert "&lt;b&gt;subarrays" in html and "<b>subarrays" not in html
+    assert "writing the statement" not in html
+    assert html.index('id="stmt"') < html.index('id="appr"')
+    assert_clean(html)
+    j = c.get("/statement").json()
+    assert "<li>" in j["html"] and j["handout_id"] == 1

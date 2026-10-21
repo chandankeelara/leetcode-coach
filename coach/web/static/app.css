@@ -891,3 +891,14 @@ dialog.confirm::backdrop { background: rgba(0, 0, 0, 0.55); }
 .badge.lc { text-transform: none; letter-spacing: 0.02em; }
 .qchart .ref span { right: auto; left: 0; top: -16px; padding: 0 4px 0 0; background: var(--surface); }
 .qchart { margin-top: var(--s6); }
+
+/* ---------- coach-written statement ---------- */
+.stmt-body { padding: var(--s4) var(--s5); font-size: 14.5px; line-height: 1.55; color: var(--text-2); overflow-wrap: anywhere; }
+.stmt-body > :first-child { margin-top: 0; }
+.stmt-body > :last-child { margin-bottom: 0; }
+.stmt-body p { margin: 0 0 var(--s3); }
+.stmt-body h4 { margin: var(--s4) 0 var(--s2); font-size: 13.5px; font-weight: 600; color: var(--text); }
+.stmt-body ul { margin: 0 0 var(--s3); padding-left: 1.3em; }
+.stmt-body code { font-family: var(--font-mono); font-size: 0.92em; }
+.stmt-body pre { margin: 0 0 var(--s3); padding: var(--s3); overflow-x: auto; border: 1px solid var(--border); border-radius: var(--r-md, 8px); }
+.stmt-body[data-pending] { font-style: italic; }

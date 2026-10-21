@@ -314,6 +314,19 @@
       schedule(Math.min(15000, 2000 * fails));
     });
   }
+  // statement: written by the coach a moment after the handoff; poll until it shows up
+  var stmt = $("stmt-body");
+  function pollStatement() {
+    if (!stmt || !stmt.hasAttribute("data-pending") || closing) return;
+    fetch("/statement", { credentials: "same-origin" }).then(function (r) {
+      if (!r.ok) throw new Error(r.status);
+      return r.json();
+    }).then(function (d) {
+      if (d.html) { stmt.innerHTML = d.html; stmt.removeAttribute("data-pending"); return; }
+      setTimeout(pollStatement, 2000);
+    }).catch(function () { setTimeout(pollStatement, 4000); });
+  }
+  setTimeout(pollStatement, 1500);
   var closing = false;
   function closed(open) {
     if (closing) return;

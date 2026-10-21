@@ -69,6 +69,13 @@ reveal(handout_id: int) -> dict                             # raises RevealBlock
 burn_pattern(user_id: int, slug: str, reason: str = "", today: date | None = None) -> int
 #   RULE ZERO leak: pattern is out of play for the current session (the picker honours it)
 
+set_statement(user_id: int, handout_id: int, text: str) -> dict   # {"ok", "handout_id", "number"}
+#   coach-written statement, stored in problems.paraphrase (overwrites), returned in Handoff.paraphrase.
+#   LEAK GUARD: raises ValueError("leak: word, word") and stores nothing if text names a pattern
+#   (patterns table names/slugs + synonyms such as sliding window, heap, dp, greedy) or easy/medium/
+#   hard. Case-, hyphen- and plural-insensitive. A term the problem's own title contains is allowed.
+get_statement(handout_id: int) -> str | None
+
 # progress (see RULE ZERO)
 status(user_id: int, today: date | None = None) -> dict
 #   {"today", "backlog": {backlog,target_today,done_today,remaining,days,owed_before,done_before,start},
