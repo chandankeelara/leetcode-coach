@@ -4,8 +4,8 @@
 <section class="ready">
   <div class="ready-inner">
     <div id="wait-on" {% if not coach_online %}hidden{% endif %}>
-      <h1 class="ready-title"><span class="wait-pulse" aria-hidden="true"></span>Your coach is choosing your next problem…</h1>
-      <p class="ready-sub">It opens here by itself. The clock starts when it does.</p>
+      <h1 class="ready-title">Your coach is choosing your next problem…</h1>
+      <p class="ready-sub"><span class="wait-pulse" aria-hidden="true"></span>It opens here by itself. The clock starts when it does.</p>
     </div>
     <div id="wait-off" {% if coach_online %}hidden{% endif %}>
       {% if none_left %}
