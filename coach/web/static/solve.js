@@ -7,7 +7,7 @@
 
   var hid = root.dataset.hid;
   var K = { code: "coach:code:" + hid, appr: "coach:appr:" + hid, draft: "coach:apprdraft:" + hid };
-  var P = { fold: "coach:probfold", split: "coach:split", tab: "coach:tab:" + hid };
+  var P = { fold: "coach:probfold", split: "coach:split", psplit: "coach:probsplit", tab: "coach:tab:" + hid };
   var store = {
     get: function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
     set: function (k, v) { try { localStorage.setItem(k, v); } catch (e) {} },
@@ -56,10 +56,6 @@
   var tabs = root.querySelectorAll(".tab");
   function stage() { return root.dataset.stage; }
   function setTab(name, quiet) {
-    if (name === "code" && stage() !== "code") {
-      if (!quiet) toast("Send your approach first. The editor opens after.", "warn");
-      name = "think";
-    }
     root.dataset.tab = name;
     tabs.forEach(function (t) { t.setAttribute("aria-selected", t.dataset.go === name ? "true" : "false"); });
     if (name === "think") { $("tab-unread").hidden = true; toBottom(false); }
@@ -71,7 +67,6 @@
     if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
     var order = ["prob", "think", "code"], i = order.indexOf(root.dataset.tab);
     i = (i + (e.key === "ArrowRight" ? 1 : 2)) % 3;
-    if (order[i] === "code" && stage() !== "code") i = (i + (e.key === "ArrowRight" ? 1 : 2)) % 3;
     setTab(order[i], true);
     $("tab-" + order[i]).focus();
   });
@@ -126,6 +121,65 @@
     ws.style.removeProperty("--mid");
     store.del(P.split);
     if (cm) cm.refresh();
+  });
+
+  var psplit = $("psplit"), probPane = $("pane-prob");
+  var MIN_PROB = 240;
+  function probMax() {
+    var room = ws.clientWidth - 9 - MIN_MID - MIN_ED;
+    return Math.max(MIN_PROB, Math.min(Math.floor(window.innerWidth / 2), room));
+  }
+  function applyProb(px) {
+    var w = Math.round(Math.max(MIN_PROB, Math.min(probMax(), px)));
+    ws.style.setProperty("--pwu", w + "px");
+    psplit.setAttribute("aria-valuenow", String(w));
+    fitCols();
+    return w;
+  }
+  function fitCols() {
+    var over = ws.scrollWidth - ws.clientWidth;
+    if (over > 0 && ws.style.getPropertyValue("--mid")) {
+      ws.style.setProperty("--mid", Math.max(MIN_MID, think.offsetWidth - over) + "px");
+    }
+  }
+  psplit.setAttribute("aria-valuemin", String(MIN_PROB));
+  var savedProb = parseInt(store.get(P.psplit), 10);
+  if (savedProb && wide.matches) applyProb(savedProb);
+  psplit.addEventListener("pointerdown", function (e) {
+    if (!wide.matches) return;
+    e.preventDefault();
+    psplit.setPointerCapture(e.pointerId);
+    var left = ws.getBoundingClientRect().left;
+    root.classList.add("dragging");
+    function move(ev) { applyProb(ev.clientX - left); }
+    function up() {
+      root.classList.remove("dragging");
+      psplit.removeEventListener("pointermove", move);
+      psplit.removeEventListener("pointerup", up);
+      psplit.removeEventListener("pointercancel", up);
+      store.set(P.psplit, String(Math.round(probPane.offsetWidth)));
+      if (cm) cm.refresh();
+    }
+    psplit.addEventListener("pointermove", move);
+    psplit.addEventListener("pointerup", up);
+    psplit.addEventListener("pointercancel", up);
+  });
+  psplit.addEventListener("keydown", function (e) {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    var w = applyProb(probPane.offsetWidth + (e.key === "ArrowRight" ? 32 : -32));
+    store.set(P.psplit, String(w));
+    if (cm) cm.refresh();
+  });
+  psplit.addEventListener("dblclick", function () {
+    ws.style.removeProperty("--pwu");
+    psplit.removeAttribute("aria-valuenow");
+    store.del(P.psplit);
+    if (cm) cm.refresh();
+  });
+  window.addEventListener("resize", function () {
+    var cur = parseInt(ws.style.getPropertyValue("--pwu"), 10);
+    if (wide.matches && cur) applyProb(cur);
   });
 
   /* ---------- editor ---------- */
@@ -189,6 +243,7 @@
   function openEditor(first) {
     var was = stage();
     root.dataset.stage = "code";
+    fitCols();
     $("think-title").textContent = "Discussion";
     $("ed-lock").hidden = true;
     if (cm) cm.setOption("readOnly", false); else ta.readOnly = false;
@@ -202,6 +257,23 @@
     } else if (cm) setTimeout(function () { cm.refresh(); }, 0);
   }
 
+  /* The coach opens the editor (editor_open on the server). Until then, after an approach,
+     the page sits in "discuss": chat visible, editor locked. */
+  function lockEditor() {
+    if (stage() !== "code") return;
+    root.dataset.stage = "discuss";
+    fitCols();
+    $("ed-lock").hidden = false;
+    if (cm) cm.setOption("readOnly", "nocursor"); else ta.readOnly = true;
+    if (root.dataset.tab === "code") setTab("think", true);
+  }
+  function enterDiscuss() {
+    if (stage() !== "approach") return;
+    root.dataset.stage = "discuss";
+    $("think-title").textContent = "Discussion";
+    fitCols();
+  }
+
   /* ---------- approach ---------- */
   var apprForm = $("appr"), apprText = $("appr-text"), apprSend = $("appr-send");
   var draft = store.get(K.draft);
@@ -209,7 +281,8 @@
   apprText.addEventListener("input", function () { store.set(K.draft, apprText.value); });
 
   var revising = false;
-  if (stage() === "code" || store.get(K.appr)) openEditor(false);
+  if (stage() === "code") openEditor(false);
+  else if (stage() === "discuss" || store.get(K.appr)) enterDiscuss();
   else setTimeout(function () { if (wide.matches || root.dataset.tab === "think") apprText.focus({ preventScroll: true }); }, 50);
 
   function markApproach() {
@@ -241,15 +314,15 @@
     }).then(function (res) {
       apprSend.classList.remove("busy");
       if (!res.ok) { toast("Not sent. Is the problem still open?", "error"); return; }
-      var first = stage() !== "code";
+      var first = stage() === "approach";
       store.set(K.appr, text);
       store.del(K.draft);
       apprText.value = "";
       endRevise();
-      openEditor(first);
+      enterDiscuss();
       expectReply();
       pollSoon();
-      toast(first ? "Approach sent. Editor open." : "Revised approach sent.", "ok");
+      toast(first ? "Approach sent. Your coach will open the editor." : "Revised approach sent.", "ok");
     }).catch(function () {
       apprSend.classList.remove("busy");
       toast("Network error. Approach not sent.", "error");
@@ -297,7 +370,7 @@
     logLink.classList.add("btn-primary");
   }
   function submit() {
-    if (stage() !== "code") { toast("Send your approach first.", "warn"); setTab("think", true); apprText.focus(); return; }
+    if (stage() !== "code") { toast("Code opens when your coach says the idea holds.", "warn"); setTab("think", true); return; }
     var code = getCode();
     if (!code.trim()) { toast("Nothing to submit yet.", "warn"); return; }
     var v = seg.querySelector("input:checked");
@@ -412,11 +485,14 @@
       if (r.redirected && /\/login/.test(r.url)) { location.href = "/login"; return; }
       if (!r.ok) throw new Error(r.status);
       var open = r.headers.get("X-Open-Handout");
+      var ed = r.headers.get("X-Editor-Open");
       return r.text().then(function (t) {
         inflight = false;
         fails = 0;
         setLive(true);
         append(t);
+        if (ed === "1" && stage() !== "code") { enterDiscuss(); openEditor(true); toast("Editor open.", "ok"); }
+        else if (ed === "0" && stage() === "code") lockEditor();
         if (open !== null && open !== hid) { closed(open); return; }
         schedule(document.hidden ? 6000 : 2000);
       });

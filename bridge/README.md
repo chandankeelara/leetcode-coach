@@ -18,6 +18,14 @@ Files:
     .claude-plugin/plugin.json    plugin manifest (skill + MCP server)
     .claude-plugin/marketplace.json  local marketplace so the plugin installs in one step
 
+## Coach presence
+
+While `wait_for_event` polls it writes `config.coach_last_seen` (UTC, at most every 5 s). The
+site treats the coach as online when that is under 90 s old, or when a coach message was
+posted in the last 10 min (older bridge builds). `/messages` returns `X-Coach-Online: 1|0`,
+`GET /coach/status` returns `{online, last_seen}`; the page shows a "Coach not connected"
+banner and an Offline dot after two offline polls in a row. Steps for the learner: `/help/connect`.
+
 ## Install — pick ONE of these
 
 **A. Plugin (skill + server together).** From any shell:

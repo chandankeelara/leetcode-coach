@@ -414,25 +414,28 @@ body.app-solve main { flex: 1; min-height: 0; display: flex; }
 .tabs { display: none; }
 
 .ws {
-  --pw: clamp(320px, 27vw, 420px);
+  --pw: var(--pwu, clamp(320px, 27vw, 420px));
+  position: relative;
   flex: 1; min-height: 0;
   display: grid;
   grid-template-columns: var(--pw) var(--mid, minmax(340px, 0.82fr)) 9px minmax(380px, 1fr);
   grid-template-rows: minmax(0, 1fr);
 }
 .prob-folded .ws { --pw: 52px; }
-.solve[data-stage="approach"] .ws { grid-template-columns: var(--pw) minmax(0, 1fr) 52px; }
+.solve[data-stage="approach"] .ws, .solve[data-stage="discuss"] .ws { grid-template-columns: var(--pw) minmax(0, 1fr) 52px; }
 .code-rail {
   display: none; flex-direction: column; align-items: center; gap: var(--s3); padding: var(--s4) 0;
   background: var(--pane); border-left: 1px solid var(--line); color: var(--text-3);
 }
 .code-rail svg { width: 18px; height: 18px; }
 .code-rail span { writing-mode: vertical-rl; font-size: 13px; font-weight: 600; letter-spacing: 0.01em; }
-.solve[data-stage="approach"] .code-rail { display: flex; }
+.solve[data-stage="approach"] .code-rail, .solve[data-stage="discuss"] .code-rail { display: flex; }
 .prob-inner .prob-num-inline { display: none; }
 body.app-solve .toasts { right: auto; left: var(--s4); bottom: var(--s4); }
 .solve[data-stage="approach"] .split,
-.solve[data-stage="approach"] .code { display: none; }
+.solve[data-stage="approach"] .code,
+.solve[data-stage="discuss"] .split,
+.solve[data-stage="discuss"] .code { display: none; }
 .dragging, .dragging * { cursor: col-resize !important; user-select: none !important; }
 
 .pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
@@ -573,8 +576,8 @@ body.app-solve .toasts { right: auto; left: var(--s4); bottom: var(--s4); }
 .appr-foot { display: flex; align-items: center; justify-content: flex-end; gap: var(--s3); }
 .appr-foot .hint { margin-right: auto; }
 .appr-cancel { display: none; }
-.solve[data-stage="code"] .appr { display: none; }
-.solve[data-stage="code"].revising .appr { display: flex; border-top: 1px solid var(--line); padding-top: var(--s4); max-width: none; }
+.solve[data-stage="code"] .appr, .solve[data-stage="discuss"] .appr { display: none; }
+.solve[data-stage="code"].revising .appr, .solve[data-stage="discuss"].revising .appr { display: flex; border-top: 1px solid var(--line); padding-top: var(--s4); max-width: none; }
 .solve.revising .appr-cancel { display: inline-flex; }
 .solve.revising .chat-form { display: none; }
 
@@ -611,6 +614,13 @@ body.app-solve .toasts { right: auto; left: var(--s4); bottom: var(--s4); }
 .split:hover::before, .split:focus-visible::before, .dragging .split::before { left: 3px; width: 3px; background: var(--hl-line); }
 .split:hover::after, .dragging .split::after { background: var(--hl); }
 .split:focus-visible { outline: none; }
+.psplit { position: absolute; top: 0; bottom: 0; left: calc(var(--pw) - 5px); width: 9px; z-index: 3; cursor: col-resize; touch-action: none; }
+.psplit::before { content: ""; position: absolute; top: 0; bottom: 0; left: 4px; width: 1px; background: transparent; transition: background var(--d-fast), width var(--d-fast), left var(--d-fast); }
+.psplit::after { content: ""; position: absolute; top: 50%; left: 2px; width: 5px; height: 36px; margin-top: -18px; border-radius: 3px; background: transparent; transition: background var(--d-fast); }
+.psplit:hover::before, .psplit:focus-visible::before, .dragging .psplit::before { left: 3px; width: 3px; background: var(--hl-line); }
+.psplit:hover::after, .psplit:focus-visible::after, .dragging .psplit::after { background: var(--hl); }
+.psplit:focus-visible { outline: none; }
+.prob-folded .psplit { display: none; }
 
 /* editor pane */
 .code { background: var(--sunk); border-left: 1px solid var(--line); }
@@ -710,11 +720,11 @@ body.app-solve .toasts { right: auto; left: var(--s4); bottom: var(--s4); }
   .tab[aria-selected="true"]::after { content: ""; position: absolute; left: 18%; right: 18%; bottom: -1px; height: 2px; border-radius: 2px; background: var(--hl); }
   .tab-lock { width: 13px; height: 13px; color: var(--text-3); }
   .solve[data-stage="code"] .tab-lock { display: none; }
-  .solve[data-stage="approach"] #tab-code { color: var(--text-3); }
+  .solve[data-stage="approach"] #tab-code, .solve[data-stage="discuss"] #tab-code { color: var(--text-3); }
   .tab-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--hl); }
 
-  .ws, .solve[data-stage="approach"] .ws { display: block; position: relative; }
-  .ws > .pane, .split { display: none !important; }
+  .ws, .solve[data-stage="approach"] .ws, .solve[data-stage="discuss"] .ws { display: block; position: relative; }
+  .ws > .pane, .split, .psplit { display: none !important; }
   .solve[data-tab="prob"] .prob,
   .solve[data-tab="think"] .think,
   .solve[data-stage="code"][data-tab="code"] .code { display: flex !important; height: 100%; }
@@ -724,6 +734,10 @@ body.app-solve .toasts { right: auto; left: var(--s4); bottom: var(--s4); }
   .prob-folded .prob-inner { display: block; }
   .think .pane-title { display: none; }
   .prob-head, .prob-folded .prob-head, .code-rail { display: none !important; }
+  /* locked editor: the Code tab shows the lock, not an empty pane */
+  .solve:not([data-stage="code"])[data-tab="code"] .code-rail { display: flex !important; height: 100%; flex-direction: column; justify-content: center; }
+  .solve:not([data-stage="code"])[data-tab="code"] .code-rail span { writing-mode: horizontal-tb; text-align: center; padding: 0 var(--s5); }
+  .solve:not([data-stage="code"])[data-tab="code"] .think { display: none !important; }
   .prob-inner .prob-num-inline { display: inline-flex; margin-bottom: var(--s3); }
   body.app-solve .toasts { top: calc(var(--nav-h) + 54px); bottom: auto; left: auto; right: 16px; }
   .think .live { margin-left: 0; }
@@ -1027,3 +1041,13 @@ body.app-solve .toasts { right: auto; left: var(--s4); bottom: var(--s4); }
 @container think (max-width: 380px) {
   .think .pane-title { display: none; }
 }
+
+/* ---- coach presence banner ---- */
+.coach-banner { display: flex; align-items: center; gap: var(--s3, 12px); padding: 6px var(--gutter, 16px); background: var(--warn-wash); color: var(--text, inherit); border-bottom: 1px solid var(--line); font-size: 13px; line-height: 1.4; }
+.coach-banner[hidden], .coach-banner.is-hidden { display: none; }
+.coach-banner .cb-msg { flex: 1; min-width: 0; }
+.coach-banner code { font-family: inherit; font-weight: 600; }
+.coach-banner .cb-link { white-space: nowrap; font-weight: 600; color: var(--warn); text-decoration: underline; }
+.help { max-width: 640px; margin: 0 auto; padding: 32px var(--gutter, 16px); line-height: 1.55; }
+.help h2 { margin-top: 1.6em; }
+.help pre { overflow-x: auto; padding: 12px; border: 1px solid var(--line); border-radius: 8px; }

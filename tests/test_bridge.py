@@ -268,3 +268,29 @@ def test_skill_md_defines_timed_mode():
     for tool in ("log_trap_recall", "set_skill", "write_session_log", "session_summary",
                  "missed_days_list"):
         assert tool in text
+
+
+# ---- editor gate tools -----------------------------------------------------------------------
+def test_unlock_lock_editor_round_trip(real):
+    service, uid = real
+    from coach import db
+    from coach.models import Handout, Pattern, Problem
+    with db.session_scope() as s:
+        s.add(Pattern(slug="two-pointers", name="Two Pointers", tier=1))
+        s.add(Problem(number=5, title="Pair Sum", lc_slug="pair-sum", difficulty="E",
+                      pattern_slug="two-pointers", source="bank"))
+        s.flush()
+        h = Handout(user_id=uid, problem_number=5, slot="drill", target_min=10)
+        s.add(h)
+        s.flush()
+        hid = h.id
+    assert service.editor_open(uid, hid) is False
+    assert server.unlock_editor() == {"ok": True}
+    assert service.editor_open(uid, hid) is True
+    assert service.list_messages(uid)[-1]["content"] == "Editor open."
+    assert server.lock_editor() == {"ok": True}
+    assert service.editor_open(uid, hid) is False
+
+
+def test_unlock_editor_without_open_problem(real):
+    assert server.unlock_editor() == {"error": "no open problem"}

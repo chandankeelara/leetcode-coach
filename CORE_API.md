@@ -109,6 +109,18 @@ set_statement(user_id: int, handout_id: int, text: str) -> dict   # {"ok", "hand
 #   hard. Case-, hyphen- and plural-insensitive. A term the problem's own title contains is allowed.
 get_statement(handout_id: int) -> str | None
 
+# visuals: coach-drawn illustrations under the statement (coach/viz.py renders)
+show_visual(user_id, handout_id, kind: str, spec: dict) -> dict   # {"id", "html"}
+#   kind: array | grid | list | tree | steps | io | html (spec schema: viz.py / SKILL.md).
+#   LEAK GUARD on every text in the spec (caption, labels, pointer names, columns, cells, io
+#   strings, html text content) via leak_words + the problem title: ValueError("leak: ...")
+#   and nothing stored or posted. Bad kind/spec: ValueError. On success it stores a `visuals`
+#   row and posts coach chat "See the problem pane: <caption or kind>" with handout_id.
+visuals(user_id, handout_id, since_id=0) -> list   # [{"id","kind","caption","html","created_at"}]
+count_visuals(user_id, handout_id) -> int
+clear_visuals(user_id, handout_id) -> int          # rows deleted
+open_handout_id(user_id) -> int | None             # latest open handout (the bridge uses it)
+
 # progress (see RULE ZERO)
 status(user_id: int, today: date | None = None) -> dict
 #   {"today", "backlog": {backlog,target_today,done_today,remaining,days,owed_before,done_before,start},
@@ -143,7 +155,7 @@ Exception: `service.RevealBlocked`.
   lacks (additive, nullable only). First use: `skills.updated_on`.
 * `coach.models`: all tables (users, patterns, problems, attempts, handouts, sessions, skills,
   skill_events, retry_items, pattern_state, burned, oa_sims, trap_recall, config, events,
-  coach_messages).
+  coach_messages, visuals).
 * `coach.lint.lint(src) -> [(line, kind, msg)]`, kinds USELESS, NONE-ASSIGN, COST, ALIAS, SYNTAX.
   Not wired into `log_attempt`; the caller runs it on the pasted code.
 * `coach.rules`: the pure functions (`backlog`, `streak`, `tier_progress`, `retry_due`,
@@ -154,11 +166,19 @@ Exception: `service.RevealBlocked`.
 
 `coach_status`, `next_problem`, `set_statement`, `wait_for_event`, `say`, `log_attempt`,
 `reveal`, `burn_pattern`, `lint`, `report`, and (new) `log_trap_recall`, `record_refire`,
-`set_skill`, `write_session_log`, `session_summary`. Chat side effects:
+`set_skill`, `write_session_log`, `session_summary`, `show_visual(kind, spec)` ->
+{ok, id} | {error}, `clear_visuals()` -> {ok, cleared} (both act on the open handout). Chat side effects:
 
 * `next_problem` posts the handoff text (never the mode), then "Statement coming." when
   `paraphrase` is null.
 * `set_statement` posts the statement to the chat on success (nothing on a leak refusal).
+
+## Web: visuals
+
+`GET /visuals?since=N` (login) -> JSON `[{id, html, caption, kind}]` for the open handout,
+ids > N. Headers: `X-Visual-Count` (total for the handout; fewer than shown = cleared, the
+page rebuilds), `X-Open-Handout`. Page side: `templates/_visuals.html` + `static/viz.js`
+(polls every 2 s while visible) + `static/viz.css`.
 
 ## CLI
 

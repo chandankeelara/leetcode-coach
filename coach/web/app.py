@@ -199,6 +199,8 @@ def render(request, name, sess=None, **ctx):
     ctx.setdefault("csrf", sess["csrf"] if sess else "")
     ctx.setdefault("authed", sess is not None)
     ctx.setdefault("nav", "neutral")
+    if name in ("solve.html", "interstitial.html"):
+        ctx.setdefault("coach_online", bool(service().coach_online()["online"]))
     return templates.TemplateResponse(request, name, ctx)
 
 
@@ -265,6 +267,12 @@ async def home(request: Request):
     return render(request, "interstitial.html", sess)
 
 
+def _editor_open(uid, h):
+    """Has the coach opened the code editor for this handout?"""
+    f = getattr(service(), "editor_open", None)
+    return bool(h and f and f(uid, h.handout_id))
+
+
 @app.get("/solve", response_class=HTMLResponse)
 async def solve(request: Request):
     sess = require(request)
@@ -276,7 +284,7 @@ async def solve(request: Request):
     msgs = [m for m in msgs if this_handout(m, h)]
     return render(request, "solve.html", sess, h=h, elapsed=elapsed_s(h),
                   started=h.started_at.strftime("%H:%M"), verdicts=VERDICTS, msgs=msgs,
-                  last=last)
+                  last=last, editor_open=_editor_open(sess["uid"], h))
 
 
 @app.post("/solve")
@@ -351,6 +359,27 @@ async def statement(request: Request):
                          "html": str(mdblock(text)) if text else ""})
 
 
+@app.get("/visuals")
+async def visuals(request: Request, since: int = 0):
+    """Coach-drawn illustrations of the open problem with id > since:
+    [{id, html, caption, kind}]. Header X-Visual-Count = how many the handout has in all
+    (fewer than shown means the coach cleared them)."""
+    sess = require(request)
+    svc = service()
+    h = svc.current_handout(sess["uid"])
+    f = getattr(svc, "visuals", None)
+    rows = f(sess["uid"], h.handout_id, since) if (h and f) else []
+    out = [{"id": v["id"], "html": v["html"], "caption": v.get("caption") or "",
+            "kind": v["kind"]} for v in rows]
+    resp = JSONResponse(out)
+    count = getattr(svc, "count_visuals", None)
+    resp.headers["X-Visual-Count"] = str(count(sess["uid"], h.handout_id) if (h and count)
+                                         else len(out))
+    resp.headers["X-Open-Handout"] = str(h.handout_id) if h else ""
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 @app.get("/messages", response_class=HTMLResponse)
 async def messages(request: Request, since: int = 0):
     sess = require(request)
@@ -360,7 +389,22 @@ async def messages(request: Request, since: int = 0):
     resp = templates.TemplateResponse(request, "_messages.html", {"msgs": msgs, "last": last})
     resp.headers["X-Last-Id"] = str(last)
     resp.headers["X-Open-Handout"] = str(h.handout_id) if h else ""
+    resp.headers["X-Coach-Online"] = "1" if service().coach_online()["online"] else "0"
+    resp.headers["X-Editor-Open"] = "1" if _editor_open(sess["uid"], h) else "0"
     return resp
+
+
+@app.get("/coach/status")
+async def coach_status(request: Request):
+    require(request)
+    c = service().coach_online()
+    return JSONResponse({"online": bool(c["online"]), "last_seen": c.get("last_seen")})
+
+
+@app.get("/help/connect", response_class=HTMLResponse)
+async def help_connect(request: Request):
+    sess = require(request)
+    return render(request, "help_connect.html", sess)
 
 
 # ---- log and reveal ------------------------------------------------------------------------

@@ -1,0 +1,184 @@
+/* Coach visuals (coach/viz.py renders, viz.js polls). App tokens only, so both themes follow. */
+
+.viz-panel { margin-top: var(--s6); padding-top: var(--s5); border-top: 1px solid var(--line); max-width: 64ch; }
+.viz-title {
+  display: flex; align-items: center; gap: var(--s2);
+  font: 600 var(--t-xs)/1 var(--f-ui); letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--text-3);
+}
+.viz-count { font-size: 11px; letter-spacing: 0; color: var(--text-3); }
+.viz-items { margin-top: var(--s3); display: flex; flex-direction: column; gap: var(--s2); }
+
+/* one illustration */
+.viz-item {
+  min-width: 0;
+  border: 1px solid var(--line); border-radius: var(--r-2);
+  background: var(--raised);
+}
+.viz-item.is-new { border-color: var(--hl-line); }
+.viz-sum {
+  display: flex; align-items: baseline; gap: var(--s2);
+  padding: 9px var(--s3); cursor: pointer; list-style: none;
+  font-size: var(--t-sm); line-height: 1.4; color: var(--text-2);
+  border-radius: var(--r-2);
+}
+.viz-sum::-webkit-details-marker { display: none; }
+.viz-sum::before {
+  content: ""; flex: none; align-self: center;
+  width: 6px; height: 6px; margin-right: 2px;
+  border-right: 1.5px solid var(--text-3); border-bottom: 1.5px solid var(--text-3);
+  transform: rotate(-45deg); transition: transform var(--d-fast) var(--ease-out);
+}
+.viz-item[open] > .viz-sum::before { transform: rotate(45deg); }
+.viz-sum:hover { color: var(--text); }
+.viz-kind {
+  flex: none; font: 500 11px/1 var(--f-num); font-stretch: 87.5%; letter-spacing: -0.01em;
+  color: var(--text-3);
+}
+.viz-item.is-new .viz-kind { color: var(--hl-ink); }
+.viz-sum-text { min-width: 0; overflow-wrap: anywhere; }
+.viz-item[open] > .viz-sum { color: var(--text); }
+.viz-body { padding: 0 var(--s3) var(--s3); min-width: 0; }
+
+/* the figure: never wider than the pane; wide content scrolls inside */
+.viz { margin: 0; min-width: 0; }
+.viz-cap { margin-top: var(--s2); font-size: var(--t-sm); color: var(--text-2); }
+.viz-item .viz-cap { display: none; }          /* the summary shows it */
+.viz-scroll {
+  max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain;
+  padding: 2px 2px 6px; scrollbar-width: thin;
+}
+.viz-empty, .viz-end { font: 500 var(--t-sm)/1 var(--f-code); color: var(--text-3); }
+
+/* cells shared by array / list / grid */
+.viz-cell {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 34px; height: 34px; padding: 0 7px;
+  font: 500 13.5px/1 var(--f-num); font-stretch: 87.5%; font-variant-numeric: tabular-nums;
+  color: var(--text); background: var(--sunk); border: 1px solid var(--line-2);
+  white-space: nowrap;
+}
+.viz-cell.viz-hl {
+  background: var(--hl-wash); border-color: var(--hl-line); color: var(--hl-ink); font-weight: 600;
+  position: relative; z-index: 1;
+}
+.viz-null { color: var(--text-3); }
+.viz-idx { font: 400 10.5px/1 var(--f-num); font-stretch: 87.5%; color: var(--text-3); }
+.viz-ptr {
+  min-height: 0; font: 600 11.5px/1.1 var(--f-code); color: var(--hl-ink); white-space: nowrap;
+}
+.viz-label {
+  max-width: 9ch; font-size: 11px; line-height: 1.25; color: var(--text-2);
+  text-align: center; overflow-wrap: anywhere;
+}
+.viz-label:empty { display: none; }
+
+/* array */
+.viz-array, .viz-list { display: flex; align-items: flex-start; width: max-content; }
+.viz-col { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.viz-array .viz-col + .viz-col { margin-left: -1px; }
+.viz-array .viz-col:first-child .viz-cell { border-radius: var(--r-1) 0 0 var(--r-1); }
+.viz-array .viz-col:last-child .viz-cell { border-radius: 0 var(--r-1) var(--r-1) 0; }
+.has-ptr .viz-ptr { height: 16px; display: flex; align-items: flex-end; }
+.has-ptr .viz-col-ptr .viz-ptr::after { content: "\25BE"; margin-left: 2px; font-size: 10px; }
+.viz-col:not(.viz-col-ptr) .viz-ptr:empty { visibility: hidden; }
+.viz-array:not(.has-ptr) .viz-ptr, .viz-list:not(.has-ptr) .viz-ptr { display: none; }
+
+/* linked list */
+.viz-list { align-items: flex-start; gap: 0; }
+.viz-node { border-radius: var(--r-2); min-width: 38px; }
+.viz-arrow {
+  flex: none; display: inline-flex; align-items: center; height: 34px; padding: 0 6px;
+  font: 400 15px/1 var(--f-ui); color: var(--text-3);
+}
+.has-ptr > .viz-arrow, .has-ptr > .viz-end { margin-top: 20px; }
+.viz-list > .viz-end { display: inline-flex; align-items: center; height: 34px; }
+.viz-back { color: var(--hl-ink); gap: 3px; font-size: 17px; }
+.viz-back-to { font: 500 11px/1 var(--f-num); }
+.viz-cycle-target { outline: 1.5px dashed var(--hl-line); outline-offset: 2px; }
+
+/* grid */
+.viz-grid { border-collapse: collapse; }
+.viz-grid th { padding: 0 4px 3px; font-weight: 400; text-align: center; }
+.viz-grid tr > th:first-child { padding: 0 6px 0 0; text-align: right; }
+.viz-grid td.viz-cell {
+  display: table-cell; min-width: 30px; width: 30px; height: 30px; padding: 0 4px;
+  text-align: center; vertical-align: middle; position: relative;
+}
+.viz-grid td.viz-path { box-shadow: inset 0 0 0 2px var(--hl); }
+.viz-grid td.viz-path.viz-hl { background: var(--hl-wash); }
+.viz-step {
+  position: absolute; top: 1px; right: 2px;
+  font: 500 8.5px/1 var(--f-num); color: var(--hl-ink);
+}
+
+/* tree (svg) */
+.viz-tree { display: block; max-width: none; overflow: visible; }
+.viz-tree-edge { stroke: var(--line-2); stroke-width: 1.5; }
+.viz-tree-node { fill: var(--sunk); stroke: var(--line-2); stroke-width: 1.5; }
+.viz-tree-val {
+  fill: var(--text); font: 500 12.5px var(--f-num); font-stretch: 87.5%;
+}
+.viz-tree-val.viz-tree-sm { font-size: 9.5px; }
+.viz-tree-idx { fill: var(--text-3); font: 400 8.5px var(--f-num); }
+.viz-tree-g.viz-hl .viz-tree-node { fill: var(--hl); stroke: var(--hl-strong); }
+.viz-tree-g.viz-hl .viz-tree-val { fill: var(--on-hl); font-weight: 600; }
+
+/* steps: state over time */
+.viz-steps {
+  border-collapse: separate; border-spacing: 0; width: max-content; min-width: 100%;
+  font: 400 12.5px/1.35 var(--f-code);
+}
+.viz-steps th {
+  position: sticky; top: 0; padding: 6px 10px; text-align: left;
+  font: 600 11px/1.2 var(--f-ui); letter-spacing: 0.02em; color: var(--text-3);
+  background: var(--raised); border-bottom: 1px solid var(--line-2);
+}
+.viz-steps td {
+  padding: 5px 10px; color: var(--text); white-space: nowrap;
+  border-bottom: 1px solid var(--line);
+}
+.viz-steps tr:last-child td { border-bottom: 0; }
+.viz-steps tr.viz-hl td { background: var(--hl-wash); color: var(--text); }
+.viz-steps tr.viz-hl td:first-child { box-shadow: inset 3px 0 0 var(--hl); }
+
+/* io: input -> output pairs */
+.viz-io { display: flex; flex-direction: column; gap: var(--s2); }
+.viz-case {
+  display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 5px 10px; align-items: baseline;
+  padding: var(--s2) var(--s3); background: var(--sunk);
+  border: 1px solid var(--line); border-radius: var(--r-2);
+}
+.viz-k { font: 600 10.5px/1 var(--f-ui); letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); }
+.viz-v {
+  min-width: 0; font: 400 12.5px/1.45 var(--f-code); color: var(--text);
+  overflow-wrap: anywhere; white-space: pre-wrap;
+}
+.viz-out { color: var(--hl-ink); font-weight: 500; }
+.viz-why { grid-column: 1 / -1; font-size: var(--t-sm); line-height: 1.45; color: var(--text-2); }
+
+/* html escape hatch: tame whatever the coach sends */
+.viz-raw { font-size: var(--t-sm); line-height: 1.5; color: var(--text); }
+.viz-raw > * + * { margin-top: 0.6em; }
+.viz-raw table { border-collapse: collapse; font-family: var(--f-code); font-size: 12.5px; }
+.viz-raw th, .viz-raw td { padding: 4px 8px; border: 1px solid var(--line); text-align: left; }
+.viz-raw th { color: var(--text-3); font-weight: 600; }
+.viz-raw code { font-size: 0.92em; }
+.viz-raw pre { margin: 0; padding: 10px 12px; background: var(--sunk); border: 1px solid var(--line); border-radius: var(--r-2); overflow-x: auto; }
+.viz-raw ul, .viz-raw ol { margin: 0; padding-left: 1.2em; }
+.viz-raw h4 { font-size: var(--t-sm); }
+.viz-raw svg { display: block; max-width: none; }
+.viz-raw svg text { fill: var(--text); font-family: var(--f-num); }
+.viz-raw .hl { background: var(--hl-wash); color: var(--hl-ink); }
+
+/* unread marker on the folded rail / the mobile Problem tab */
+.viz-dot {
+  display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--hl); box-shadow: 0 0 0 2px var(--pane);
+}
+.prob-rail .viz-dot { margin-top: var(--s1); }
+.tab .viz-dot { margin-left: 6px; vertical-align: 2px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .viz-sum::before { transition: none; }
+}

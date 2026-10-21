@@ -407,3 +407,45 @@ def test_missed_trap_restarts_refire_count(world):
     service.log_trap_recall(uid, "sliding-window", "stale max", "window shrink", False, True)
     with session_scope() as s:
         assert s.scalars(select(PatternState).where(PatternState.user_id == uid)).first().refires == []
+
+
+def test_wait_event_heartbeat(world):
+    assert service.coach_online()["last_seen"] is None
+    asyncio.run(service.wait_event(world, timeout_s=0.1, poll_s=0.02))
+    c = service.coach_online()
+    assert c["last_seen"] and c["online"] and c["reason"] == "heartbeat"
+
+
+def test_coach_online_by_last_seen(world):
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    service.coach_seen(now - timedelta(seconds=60))
+    assert service.coach_online(now)["online"] is True
+    service.coach_seen(now - timedelta(seconds=120))
+    r = service.coach_online(now)
+    assert r["online"] is False and r["last_seen"]
+
+
+def test_coach_online_by_recent_message(world):
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    assert service.coach_online(now)["online"] is False
+    service.post_message(world, "user", "hi")
+    assert service.coach_online(now)["online"] is False       # only coach messages count
+    service.post_message(world, "coach", "hello")
+    r = service.coach_online(now)
+    assert r["online"] is True and r["reason"] == "recent_message"
+    assert service.coach_online(now + timedelta(minutes=11))["online"] is False
+
+
+def test_editor_gate(world):
+    h = service.next_problem(world, today=TODAY)
+    assert service.editor_open(world, h.handout_id) is False       # starts locked
+    assert service.unlock_editor(world, h.handout_id) == {"ok": True}
+    assert service.editor_open(world, h.handout_id) is True
+    msgs = service.list_messages(world)
+    assert msgs[-1]["content"] == "Editor open." and msgs[-1]["role"] == "coach"
+    assert msgs[-1]["handout_id"] == h.handout_id
+    assert service.lock_editor(world, h.handout_id) == {"ok": True}
+    assert service.editor_open(world, h.handout_id) is False
+    assert service.unlock_editor(world, 99999)["ok"] is False

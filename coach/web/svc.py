@@ -126,15 +126,27 @@ class Svc:
     def burn_pattern(self, user_id, slug, reason):
         return _s.burn_pattern(user_id, slug, reason)
 
+    def coach_online(self):
+        return _s.coach_online()
+
     def push_event(self, user_id, kind, payload):
         return _s.push_event(user_id, kind, payload)
 
     def post_message(self, user_id, role, content):
         return _s.post_message(user_id, role, content)
 
+    def editor_open(self, user_id, handout_id):
+        return _s.editor_open(user_id, handout_id)
+
     def messages(self, user_id, since_id=0):
         f = getattr(_s, "messages", None) or _s.list_messages
         return f(user_id, since_id)
+
+    def visuals(self, user_id, handout_id, since_id=0):
+        return _s.visuals(user_id, handout_id, since_id)
+
+    def count_visuals(self, user_id, handout_id):
+        return _s.count_visuals(user_id, handout_id)
 
     def status(self, user_id):
         st = dict(_s.status(user_id))

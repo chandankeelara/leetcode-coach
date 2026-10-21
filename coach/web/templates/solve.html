@@ -11,10 +11,11 @@
   <span class="clock-of"><span class="clock-of-lbl">target</span> {{ "%02d"|format(h.target_min) }}:00</span>
   <span class="clock-state" id="t-state"></span>
 </div>
+{% include "_coach_banner.html" %}
 {% endblock %}
 {% block body %}
 {% set sent = (msgs|selectattr("role", "equalto", "user")|list|length) > 0 %}
-<section class="solve" id="solve" data-hid="{{ h.handout_id }}" data-elapsed="{{ elapsed }}" data-target="{{ h.target_min }}" data-last="{{ last }}" data-title="{{ h.number }}. {{ h.title }}" data-stage="{{ 'code' if sent else 'approach' }}" data-tab="think">
+<section class="solve" id="solve" data-hid="{{ h.handout_id }}" data-elapsed="{{ elapsed }}" data-target="{{ h.target_min }}" data-last="{{ last }}" data-title="{{ h.number }}. {{ h.title }}" data-stage="{{ 'code' if editor_open else ('discuss' if sent else 'approach') }}" data-tab="think">
   <div class="tabs" role="tablist" aria-label="Workspace">
     <button class="tab" type="button" role="tab" id="tab-prob" data-go="prob" aria-controls="pane-prob" aria-selected="false">Problem</button>
     <button class="tab" type="button" role="tab" id="tab-think" data-go="think" aria-controls="pane-think" aria-selected="true">Discuss<span class="tab-dot" id="tab-unread" hidden></span></button>
@@ -43,12 +44,15 @@
             {% if h.paraphrase %}{{ h.paraphrase|mdblock }}{% else %}<p class="stmt-wait"><span class="pulse" aria-hidden="true"></span>Your coach is writing the statement…</p>{% endif %}
           </div>
         </div>
+        {% include "_visuals.html" %}
       </div>
     </aside>
 
+    <div class="psplit" id="psplit" role="separator" aria-orientation="vertical" aria-label="Resize the problem pane" aria-controls="pane-prob" tabindex="0"></div>
+
     <section class="pane think" id="pane-think" role="tabpanel" aria-labelledby="tab-think">
       <header class="pane-head">
-        <h2 class="pane-title" id="think-title">{{ "Discussion" if sent else "Approach" }}</h2>
+        <h2 class="pane-title" id="think-title">{{ "Discussion" if (sent or editor_open) else "Approach" }}</h2>
         <span class="live" id="live" data-state="on" title="Connection to your coach"><i></i><span id="live-txt">Live</span></span>
         <div class="pane-tools">
           <button class="btn btn-quiet btn-sm" type="button" id="stuck">I'm stuck</button>
@@ -91,7 +95,7 @@
 
     <div class="code-rail" aria-hidden="true">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
-      <span>Code opens after your approach</span>
+      <span>Code opens when your coach says the idea holds.</span>
     </div>
 
     <div class="split" id="split" role="separator" aria-orientation="vertical" aria-label="Resize the editor" aria-controls="ed" tabindex="0"></div>
@@ -107,9 +111,9 @@
         <span class="ed-saved" id="ed-saved" aria-live="polite"></span>
         <label class="sr-only" for="code">Code</label>
         <textarea id="code" name="code" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="class Solution:"></textarea>
-        <div class="ed-lock" id="ed-lock">
+        <div class="ed-lock" id="ed-lock"{% if editor_open %} hidden{% endif %}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
-          <p>The editor opens after you send your approach.</p>
+          <p>Code opens when your coach says the idea holds.</p>
         </div>
       </div>
       <div class="lint-out" id="lint-out" aria-live="polite"></div>
@@ -154,4 +158,5 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/selection/active-line.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/comment/comment.min.js"></script>
 <script src="/static/solve.js"></script>
+<link rel="stylesheet" href="/static/viz.css"><script src="/static/viz.js"></script>
 {% endblock %}

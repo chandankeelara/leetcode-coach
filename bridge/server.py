@@ -191,6 +191,52 @@ def set_statement(handout_id: int, text: str) -> dict:
     return {"ok": True}
 
 
+def _open_handout():
+    s = svc()
+    f = getattr(s, "open_handout_id", None)
+    return f(uid()) if f else None
+
+
+@mcp.tool()
+def show_visual(kind: str, spec: dict) -> dict:
+    """Draw something in his problem pane: array | grid | list | tree | steps | io | html. Captions go through the leak guard."""
+    hid = _open_handout()
+    if hid is None:
+        return {"error": "no open problem"}
+    try:
+        r = svc().show_visual(uid(), hid, kind, spec)
+    except ValueError as e:
+        return {"error": str(e)}
+    return {"ok": True, "id": r["id"]}
+
+
+@mcp.tool()
+def unlock_editor() -> dict:
+    """Open the code editor on his page. Only after the idea holds."""
+    hid = _open_handout()
+    if hid is None:
+        return {"error": "no open problem"}
+    return svc().unlock_editor(uid(), hid)
+
+
+@mcp.tool()
+def lock_editor() -> dict:
+    """Lock the code editor again."""
+    hid = _open_handout()
+    if hid is None:
+        return {"error": "no open problem"}
+    return svc().lock_editor(uid(), hid)
+
+
+@mcp.tool()
+def clear_visuals() -> dict:
+    """Remove every drawing from his problem pane for the open problem."""
+    hid = _open_handout()
+    if hid is None:
+        return {"error": "no open problem"}
+    return {"ok": True, "cleared": svc().clear_visuals(uid(), hid)}
+
+
 async def _wait(timeout_s, ctx=None):
     if _pending:
         return _pending.popleft()

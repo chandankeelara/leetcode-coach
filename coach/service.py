@@ -8,7 +8,7 @@ show them in the same screen/message as a problem handoff.
 """
 import asyncio
 import re
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError
@@ -17,8 +17,9 @@ from sqlalchemy import select
 from . import picker, rules, state
 from .catalog import default_target, pattern_name, pattern_tier
 from .db import session_scope
-from .models import (Attempt, Burned, CoachMessage, CoachSession, Event, Handout, Pattern,
-                     PatternState, Problem, RetryItem, Skill, SkillEvent, TrapRecall, User)
+from .models import (Attempt, Burned, CoachMessage, Config, CoachSession, Event, Handout, Pattern,
+                     PatternState, Problem, RetryItem, Skill, SkillEvent, TrapRecall, User,
+                     Visual)
 
 _hasher = PasswordHasher()
 
@@ -230,6 +231,73 @@ def get_statement(handout_id):
         if h is None:
             return None
         return s.get(Problem, h.problem_number).paraphrase
+
+
+# ---- visuals (coach-drawn illustrations under the statement) --------------------------------
+def open_handout_id(user_id):
+    """The user's latest open handout id (any day), or None."""
+    with session_scope() as s:
+        return s.scalars(select(Handout.id).where(
+            Handout.user_id == user_id, Handout.status == "open",
+            Handout.slot != "imported").order_by(Handout.id.desc())).first()
+
+
+def show_visual(user_id, handout_id, kind, spec):
+    """Render, leak-check and store one visual for a handout, and post a coach chat line
+    pointing at it. ValueError on a bad kind/spec, or ValueError('leak: ...') (nothing stored,
+    nothing posted) when any text in the spec names a technique or a difficulty.
+    Returns {"id", "html"}."""
+    from . import viz
+    kind = viz.check_kind(kind)
+    if not isinstance(spec, dict):
+        raise ValueError("spec must be an object")
+    with session_scope() as s:
+        h = s.get(Handout, handout_id) if handout_id is not None else None
+        if h is None or h.user_id != user_id:
+            raise ValueError(f"no handout {handout_id}")
+        title = s.get(Problem, h.problem_number).title
+        bad = leak_words("\n".join(viz.texts(kind, spec)), title, s)
+        if bad:
+            raise ValueError("leak: " + ", ".join(bad))
+        html_out = viz.render(kind, spec)
+        cap = viz.caption(spec)
+        label = cap or viz.KIND_LABEL[kind]
+        if leak_words(label, title, s):
+            label = "illustration"
+        v = Visual(user_id=user_id, handout_id=h.id, kind=kind, spec=spec, html=html_out,
+                   caption=cap)
+        s.add(v)
+        s.add(CoachMessage(user_id=user_id, handout_id=h.id, role="coach",
+                           content=f"See the problem pane: {label}"))
+        s.flush()
+        return {"id": v.id, "html": html_out}
+
+
+def visuals(user_id, handout_id, since_id=0):
+    """[{"id", "kind", "caption", "html", "created_at"}] of a handout, oldest first."""
+    with session_scope() as s:
+        rows = s.scalars(select(Visual).where(
+            Visual.user_id == user_id, Visual.handout_id == handout_id,
+            Visual.id > (since_id or 0)).order_by(Visual.id))
+        return [{"id": v.id, "kind": v.kind, "caption": v.caption, "html": v.html,
+                 "created_at": v.created_at.isoformat()} for v in rows]
+
+
+def count_visuals(user_id, handout_id):
+    from sqlalchemy import func
+    with session_scope() as s:
+        return s.scalar(select(func.count(Visual.id)).where(
+            Visual.user_id == user_id, Visual.handout_id == handout_id)) or 0
+
+
+def clear_visuals(user_id, handout_id):
+    """Delete a handout's visuals. Returns how many."""
+    with session_scope() as s:
+        rows = s.scalars(select(Visual).where(Visual.user_id == user_id,
+                                              Visual.handout_id == handout_id)).all()
+        for v in rows:
+            s.delete(v)
+        return len(rows)
 
 
 # ---- logging -------------------------------------------------------------------------------
@@ -446,12 +514,58 @@ def _drain(user_id):
                  "created_at": e.created_at.isoformat()} for e in rows]
 
 
+SEEN_KEY = "coach_last_seen"
+SEEN_EVERY_S = 5.0          # heartbeat write throttle while polling
+ONLINE_WINDOW_S = 90        # heartbeat this fresh = coach is connected
+MSG_WINDOW_S = 600          # fallback: a coach message this recent = coach is around
+
+
+def coach_seen(now=None):
+    """Heartbeat: record that the coach is polling right now (config.coach_last_seen, UTC iso)."""
+    now = now or datetime.now(timezone.utc)
+    with session_scope() as s:
+        row = s.get(Config, SEEN_KEY)
+        if row is None:
+            s.add(Config(key=SEEN_KEY, value=now.isoformat()))
+        else:
+            row.value = now.isoformat()
+
+
+def coach_online(now=None):
+    """{online, last_seen (iso|None), reason}. Online when the heartbeat is under 90 s old, or
+    (older bridge builds that never heartbeat) a coach message was posted in the last 10 min."""
+    now = now or datetime.now(timezone.utc)
+    with session_scope() as s:
+        row = s.get(Config, SEEN_KEY)
+        seen = row.value if row else None
+        newest = s.scalars(select(CoachMessage.created_at).where(CoachMessage.role == "coach")
+                           .order_by(CoachMessage.id.desc()).limit(1)).first()
+    if seen:
+        try:
+            ts = datetime.fromisoformat(seen)
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            if (now - ts).total_seconds() <= ONLINE_WINDOW_S:
+                return {"online": True, "last_seen": seen, "reason": "heartbeat"}
+        except (TypeError, ValueError):
+            pass
+    if newest is not None:          # message times are naive local
+        local_now = now.astimezone().replace(tzinfo=None)
+        if (local_now - newest).total_seconds() <= MSG_WINDOW_S:
+            return {"online": True, "last_seen": seen, "reason": "recent_message"}
+    return {"online": False, "last_seen": seen, "reason": "no_heartbeat" if seen else "never_seen"}
+
+
 async def wait_event(user_id, timeout_s=25.0, poll_s=0.25):
     """Long-poll: return (and mark consumed) every pending event as soon as there is one, or
-    [] when `timeout_s` passes with none."""
+    [] when `timeout_s` passes with none. Each pass beats the coach heartbeat (<= once / 5 s)."""
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout_s
+    beat = None
     while True:
+        if beat is None or loop.time() - beat >= SEEN_EVERY_S:
+            beat = loop.time()
+            coach_seen()
         got = _drain(user_id)
         if got:
             return got
@@ -467,6 +581,33 @@ def post_message(user_id, role, content, handout_id=None):
         s.add(m)
         s.flush()
         return m.id
+
+
+# ---- editor gate: the coach opens the code editor, the learner cannot --------------------
+def _set_editor(user_id, handout_id, on, message=None):
+    with session_scope() as s:
+        h = s.get(Handout, handout_id)
+        if h is None or h.user_id != user_id:
+            return {"ok": False, "error": "no such handout"}
+        h.editor_open = on
+    if message:
+        post_message(user_id, "coach", message, handout_id=handout_id)
+    return {"ok": True}
+
+
+def unlock_editor(user_id, handout_id):
+    """Open the code editor on his page. Posts the coach message "Editor open."."""
+    return _set_editor(user_id, handout_id, True, "Editor open.")
+
+
+def lock_editor(user_id, handout_id):
+    return _set_editor(user_id, handout_id, False)
+
+
+def editor_open(user_id, handout_id):
+    with session_scope() as s:
+        h = s.get(Handout, handout_id)
+        return bool(h is not None and h.user_id == user_id and h.editor_open)
 
 
 def list_messages(user_id, since_id=0, limit=200):

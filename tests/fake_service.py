@@ -10,6 +10,7 @@ class FakeService:
         self.msgs = []
         self.logged = {}
         self.n = 0
+        self.online = True
 
     def verify_user(self, username, password):
         return 1 if (username, password) == ("me", "pw") else None
@@ -39,11 +40,26 @@ class FakeService:
 
     def burn_pattern(self, uid, slug, reason): pass
 
+    def coach_online(self):
+        return {"online": self.online, "last_seen": None, "reason": "fake"}
+
     def push_event(self, uid, kind, payload):
         self.events.append((kind, payload))
 
     def post_message(self, uid, role, content):
         self.msgs.append({"id": len(self.msgs) + 1, "role": role, "content": content})
+
+    def unlock_editor(self, uid, handout_id):
+        self.editor = True
+        self.post_message(uid, "coach", "Editor open.")
+        return {"ok": True}
+
+    def lock_editor(self, uid, handout_id):
+        self.editor = False
+        return {"ok": True}
+
+    def editor_open(self, uid, handout_id):
+        return getattr(self, "editor", False)
 
     def messages(self, uid, since_id=0):
         return [m for m in self.msgs if m["id"] > since_id]

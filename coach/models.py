@@ -66,6 +66,7 @@ class Handout(Base):
     handed_at: Mapped[datetime] = mapped_column(DateTime, default=_now)   # server clock
     target_min: Mapped[int] = mapped_column(Integer)
     status: Mapped[str] = mapped_column(String(16), default="open")       # open|logged|skipped
+    editor_open: Mapped[bool | None] = mapped_column(Boolean, default=False)  # coach opens it
 
 
 class Attempt(Base):
@@ -196,4 +197,18 @@ class CoachMessage(Base):
     handout_id: Mapped[int | None] = mapped_column(ForeignKey("handouts.id"), nullable=True)
     role: Mapped[str] = mapped_column(String(16))
     content: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class Visual(Base):
+    """Coach-drawn illustrations shown under the statement (array, grid, tree, ...).
+    `html` is the rendered, escaped markup; `spec` the JSON it came from."""
+    __tablename__ = "visuals"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    handout_id: Mapped[int] = mapped_column(ForeignKey("handouts.id"))
+    kind: Mapped[str] = mapped_column(String(16))
+    spec: Mapped[object] = mapped_column(JSON, default=dict)
+    html: Mapped[str] = mapped_column(Text)
+    caption: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)

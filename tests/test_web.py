@@ -203,3 +203,54 @@ def test_solve_statement_card_and_poll(env):
     assert_clean(html)
     j = c.get("/statement").json()
     assert "<li>" in j["html"] and j["handout_id"] == 1
+
+
+def test_coach_presence(env):
+    c, fake = env
+    login(c); start(c)
+    r = c.get("/messages")
+    assert r.headers["X-Coach-Online"] == "1"
+    page = c.get("/solve").text
+    assert 'id="coach-banner"' in page and "Coach not connected." in page
+    assert re.search(r'id="coach-banner"[^>]*\shidden', page)       # online: hidden
+    assert c.get("/coach/status").json() == {"online": True, "last_seen": None}
+    fake.online = False
+    assert c.get("/messages").headers["X-Coach-Online"] == "0"
+    page = c.get("/solve").text
+    assert not re.search(r'id="coach-banner"[^>]*\shidden', page)   # offline: shown
+    assert "/help/connect" in page and "/leetcode-coach:coach" in page
+    assert c.get("/coach/status").json()["online"] is False
+    c.get("/") ; assert 'id="coach-banner"' in c.get("/solve").text
+
+
+def test_help_connect(env):
+    c, _ = env
+    assert c.get("/help/connect").headers["location"] == "/login"
+    login(c)
+    r = c.get("/help/connect")
+    assert r.status_code == 200 and "plugin install" in r.text and "start.ps1" in r.text
+    assert_clean(r.text)
+
+
+# ---- editor gate: only the coach opens the editor -------------------------------------------
+def test_editor_locked_until_coach_unlocks(env):
+    c, fake = env
+    login(c)
+    t = start(c)
+    h = {"X-CSRF-Token": t}
+    assert 'data-stage="approach"' in c.get("/solve").text
+    assert c.get("/messages?since=0").headers["X-Editor-Open"] == "0"
+    c.post("/solve/approach", data={"approach": "scan once"}, headers=h)
+    html = c.get("/solve").text
+    assert 'data-stage="discuss"' in html                       # discussion shows, editor locked
+    assert "Code opens when your coach says the idea holds." in html
+    assert 'id="ed-lock"' in html and 'id="ed-lock" hidden' not in html
+    assert c.get("/messages?since=0").headers["X-Editor-Open"] == "0"
+    fake.unlock_editor(1, 1)
+    r = c.get("/messages?since=0")
+    assert r.headers["X-Editor-Open"] == "1" and "Editor open." in r.text
+    html = c.get("/solve").text
+    assert 'data-stage="code"' in html and 'id="ed-lock" hidden' in html
+    fake.lock_editor(1, 1)
+    assert c.get("/messages?since=0").headers["X-Editor-Open"] == "0"
+    assert 'data-stage="discuss"' in c.get("/solve").text
