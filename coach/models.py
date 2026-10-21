@@ -74,6 +74,7 @@ class Handout(Base):
     phase_label: Mapped[str | None] = mapped_column(String(40), nullable=True)
     first_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # never moves
     checkpoints_fired: Mapped[list | None] = mapped_column(JSON, nullable=True)   # [50, 100, ...]
+    stub: Mapped[str | None] = mapped_column(Text, nullable=True)   # editor tools: starter code
 
 
 class Attempt(Base):
@@ -253,3 +254,95 @@ class UiEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
     # AUTOINCREMENT: ids never reused after pruning, so a page's `since` stays valid.
     __table_args__ = {"sqlite_autoincrement": True}
+
+
+# ---- editor tools (coach/editor.py) ---------------------------------------------------------
+class CodeDraft(Base):
+    """His editor text, autosaved by the page (one row per handout, upserted)."""
+    __tablename__ = "code_drafts"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    handout_id: Mapped[int] = mapped_column(ForeignKey("handouts.id"), unique=True)
+    code: Mapped[str] = mapped_column(Text, default="")
+    cursor_line: Mapped[int | None] = mapped_column(Integer, nullable=True)     # 1-based
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class Annotation(Base):
+    """A coach box under one line of his code. kind: question | followup | note | highlight.
+    A highlight's lines live in `lines` (1-based); `anchor` is the line's text when placed."""
+    __tablename__ = "annotations"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    handout_id: Mapped[int] = mapped_column(ForeignKey("handouts.id"), index=True)
+    line: Mapped[int] = mapped_column(Integer)
+    kind: Mapped[str] = mapped_column(String(16))
+    text: Mapped[str] = mapped_column(Text, default="")
+    lines: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    anchor: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    reply: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reply_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class CodeOp(Base):
+    """A pending edit the page applies into his editor. op: insert_comment."""
+    __tablename__ = "code_ops"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    handout_id: Mapped[int] = mapped_column(ForeignKey("handouts.id"), index=True)
+    op: Mapped[str] = mapped_column(String(32), default="insert_comment")
+    line: Mapped[int] = mapped_column(Integer)
+    text: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    applied_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class Scratch(Base):
+    """A read-only code tab the coach opens beside solution.py (teaching demos)."""
+    __tablename__ = "scratch"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    handout_id: Mapped[int] = mapped_column(ForeignKey("handouts.id"), index=True)
+    title: Mapped[str] = mapped_column(String(80))
+    code: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+# ---- tests panel: cases, spec and runs (coach/runner.py executes) ---------------------------
+class TestSpec(Base):
+    """How a handout's cases are called: mode function|design and the entry
+    ({"class", "method"}). One row per handout, written by set_tests."""
+    __tablename__ = "test_specs"
+    __test__ = False          # not a pytest class
+    handout_id: Mapped[int] = mapped_column(ForeignKey("handouts.id"), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    mode: Mapped[str] = mapped_column(String(16), default="function")
+    entry: Mapped[object] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class TestCase(Base):
+    """One test case of a handout. source: coach (set_tests, replaced as a set) | user."""
+    __tablename__ = "test_cases"
+    __test__ = False
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    handout_id: Mapped[int] = mapped_column(ForeignKey("handouts.id"), index=True)
+    source: Mapped[str] = mapped_column(String(8), default="coach")
+    case: Mapped[object] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class TestRun(Base):
+    """One run of the cases. who: user (Run button) | coach (run_tests, never shown to him)."""
+    __tablename__ = "test_runs"
+    __test__ = False
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    handout_id: Mapped[int] = mapped_column(ForeignKey("handouts.id"), index=True)
+    who: Mapped[str] = mapped_column(String(8), default="user")
+    code: Mapped[str] = mapped_column(Text, default="")
+    results: Mapped[object] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)

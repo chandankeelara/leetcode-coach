@@ -251,6 +251,7 @@
 
   var savedEl = $("ed-saved"), saveT;
   function onCodeChange() {
+    queueServerSave();
     clearTimeout(saveT);
     savedEl.textContent = "editing";
     saveT = setTimeout(function () {
@@ -314,6 +315,7 @@
     for (var j = 0; j < mine.length; j++) {
       if (mine[j].classList.contains("is-appr")) continue;
       var body = mine[j].querySelector(".msg-body");
+      if (body && /^Re line \d+:/.test(body.textContent.trim())) continue;   /* a code-box reply */
       if (j === 0 || (t && body && body.textContent.trim() === t)) {
         mine[j].classList.add("is-appr");
         mine[j].classList.remove("cont");
@@ -627,6 +629,276 @@
       toast("Message not sent.", "error");
     });
   }
+
+  /* ---------- editor tools: server draft, stub, coach boxes, coach comments, scratch ----------
+     The draft is autosaved to the server (POST /code/draft, 800 ms debounce) so the coach can
+     read it. /code/state carries the stub, the draft, open annotations, pending comment
+     inserts and scratch tabs; it is refetched on `editor`, `annotations`, `code_ops`,
+     `scratch` and resync. */
+  var SAVE_MS = 800, srvT = null, srvPending = false, lastSent = null, edReady = false;
+  function cursorLine() { return cm ? cm.getCursor().line + 1 : 1; }
+  function queueServerSave() {
+    if (!edReady || closing) return;
+    srvPending = true;
+    clearTimeout(srvT);
+    srvT = setTimeout(function () { sendDraft(false); }, SAVE_MS);
+  }
+  function sendDraft(keep) {
+    clearTimeout(srvT);
+    if (!srvPending || closing) return;
+    srvPending = false;
+    var body = { code: getCode(), cursor_line: cursorLine(), handout_id: hid };
+    var key = body.code + "\u0000" + body.cursor_line;
+    if (key === lastSent) return;
+    lastSent = key;
+    if (keep) {
+      var p = new URLSearchParams();
+      Object.keys(body).forEach(function (k) { p.append(k, body[k]); });
+      try {
+        fetch("/code/draft", { method: "POST", keepalive: true, credentials: "same-origin", body: p,
+          headers: Object.assign({ "Content-Type": "application/x-www-form-urlencoded" }, window.coach.headers || {}) });
+      } catch (e) {}
+      return;
+    }
+    post("/code/draft", body).then(function (r) { if (!r.ok) lastSent = null; }).catch(function () { lastSent = null; });
+  }
+  if (cm) cm.on("cursorActivity", queueServerSave);
+  window.addEventListener("pagehide", function () { sendDraft(true); });
+
+  function setCode(v) {
+    if (cm) { cm.setValue(v); boxes = {}; } else ta.value = v;
+  }
+  function esc(t) {
+    return String(t == null ? "" : t).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+  function rich(t) { return esc(t).replace(/`([^`\n]+)`/g, "<code>$1</code>"); }
+
+  /* coach comment lines: an overlay for the text, a line class for the row */
+  var COACH_RE = /^\s*# coach:/;
+  if (cm) {
+    cm.addOverlay({ token: function (stream) {
+      if (stream.sol() && stream.match(/^\s*# coach:.*$/)) return "coach-note";
+      stream.skipToEnd();
+      return null;
+    } });
+    cm.on("renderLine", function (c, line, elt) { if (COACH_RE.test(line.text)) elt.className += " cm-coach-line"; });
+  }
+
+  /* annotations: id -> {kind, widget, bookmark, lines: [handles]} */
+  var boxes = {};
+  function findLine(n0, anchor) {
+    var n = cm.lineCount(), ln = Math.min(Math.max(n0 - 1, 0), n - 1);
+    if (anchor == null || !String(anchor).trim() || cm.getLine(ln) === anchor) return ln;
+    for (var d = 1; d < n; d++) {
+      if (ln - d >= 0 && cm.getLine(ln - d) === anchor) return ln - d;
+      if (ln + d < n && cm.getLine(ln + d) === anchor) return ln + d;
+    }
+    return ln;
+  }
+  function dropBox(id) {
+    var b = boxes[id];
+    if (!b) return;
+    if (b.widget) b.widget.clear();
+    if (b.bookmark) b.bookmark.clear();
+    (b.lines || []).forEach(function (h) { cm.removeLineClass(h, "background", "cm-hl-line"); cm.removeLineClass(h, "gutter", "cm-hl-gutter"); });
+    delete boxes[id];
+  }
+  function resolveBox(id) {
+    dropBox(id);
+    post("/code/annotations/" + id + "/resolve", {}).catch(function () {});
+  }
+  function boxEl(a) {
+    var el = document.createElement("div");
+    el.className = "ann ann-" + a.kind;
+    el.dataset.id = a.id;
+    var label = { question: "Coach asks", followup: "Follow-up", note: "Coach note" }[a.kind] || "Coach";
+    var html = '<div class="ann-head"><span class="ann-kind">' + label + '</span>' +
+      '<button class="ann-x" type="button" aria-label="Dismiss" title="Dismiss">×</button></div>' +
+      '<div class="ann-text">' + rich(a.text) + '</div>';
+    if (a.kind === "question" || a.kind === "followup") {
+      html += a.reply
+        ? '<div class="ann-answer"><span>You:</span> ' + rich(a.reply) + '</div>'
+        : '<form class="ann-reply" autocomplete="off"><input type="text" class="ann-in" maxlength="2000" placeholder="Your answer" aria-label="Your answer"><button class="btn btn-sm ann-send" type="submit">Send</button></form>';
+    }
+    el.innerHTML = html;
+    el.querySelector(".ann-x").addEventListener("click", function () { resolveBox(a.id); });
+    var f = el.querySelector(".ann-reply");
+    if (f) {
+      var inp = f.querySelector("input");
+      inp.addEventListener("keydown", function (e) { e.stopPropagation(); if (e.key === "Escape") { inp.blur(); if (cm) cm.focus(); } });
+      f.addEventListener("submit", function (e) {
+        e.preventDefault();
+        var t = inp.value.trim();
+        if (!t) { inp.focus(); return; }
+        f.classList.add("busy");
+        post("/code/annotations/" + a.id + "/reply", { text: t }).then(function (r) {
+          if (!r.ok) throw new Error(r.status);
+          var ans = document.createElement("div");
+          ans.className = "ann-answer";
+          ans.innerHTML = "<span>You:</span> " + rich(t);
+          f.replaceWith(ans);
+          if (boxes[a.id]) { boxes[a.id].reply = t; if (boxes[a.id].widget) boxes[a.id].widget.changed(); }
+          toast("Sent to your coach.", "ok");
+          expectReply();
+          pollSoon();
+        }).catch(function () { f.classList.remove("busy"); toast("Not sent.", "error"); });
+      });
+    }
+    return el;
+  }
+  function placeBox(a, live) {
+    var ln;
+    if (a.kind === "highlight") {
+      var first = (a.lines && a.lines.length ? a.lines[0] : a.line);
+      var off = findLine(first, a.anchor) - (first - 1), handles = [];
+      (a.lines || [a.line]).forEach(function (n) {
+        var l = n - 1 + off;
+        if (l < 0 || l >= cm.lineCount()) return;
+        handles.push(cm.addLineClass(l, "background", "cm-hl-line"));
+        cm.addLineClass(l, "gutter", "cm-hl-gutter");
+      });
+      var bm = null;
+      ln = Math.max(0, Math.min(cm.lineCount() - 1, first - 1 + off));
+      if (a.text) {
+        var chip = document.createElement("span");
+        chip.className = "hl-chip";
+        chip.innerHTML = rich(a.text) + '<button type="button" class="hl-x" aria-label="Dismiss" title="Dismiss">×</button>';
+        chip.querySelector(".hl-x").addEventListener("mousedown", function (e) { e.preventDefault(); resolveBox(a.id); });
+        bm = cm.setBookmark({ line: ln, ch: cm.getLine(ln).length }, { widget: chip, insertLeft: true, handleMouseEvents: true });
+      }
+      boxes[a.id] = { kind: a.kind, lines: handles, bookmark: bm };
+    } else {
+      ln = findLine(a.line, a.anchor);
+      var w = cm.addLineWidget(ln, boxEl(a), { coverGutter: false, noHScroll: true });
+      boxes[a.id] = { kind: a.kind, widget: w, reply: a.reply || null };
+    }
+    if (live) cm.scrollIntoView({ line: ln, ch: 0 }, 90);
+  }
+  function renderAnnotations(list, live) {
+    if (!cm) return;
+    var want = {};
+    list.forEach(function (a) { want[a.id] = a; });
+    Object.keys(boxes).forEach(function (id) {
+      var a = want[id], b = boxes[id];
+      /* gone, or a reply typed in another tab: drop (and rebuild) that box */
+      if (!a || (b.widget && (a.reply || null) !== b.reply)) dropBox(id);
+    });
+    cm.operation(function () {
+      list.forEach(function (a) { if (!boxes[a.id]) placeBox(a, live); });
+    });
+  }
+
+  /* coach comments: claim each pending op on the server first, so it lands once */
+  var claimed = {};
+  function applyOps(ops) {
+    if (!cm) return;
+    ops.forEach(function (o) {
+      if (claimed[o.id]) return;
+      claimed[o.id] = 1;
+      post("/code/ops/" + o.id + "/applied", {}).then(function (r) { return r.json(); }).then(function (res) {
+        if (!res || !res.first) return;
+        var n = cm.lineCount(), ln = Math.max(0, o.line - 1), text = "# coach: " + o.text;
+        if (ln >= n) {
+          var last = cm.getLine(n - 1);
+          cm.replaceRange((last.length ? "\n" : "") + text, { line: n - 1, ch: last.length }, null, "+coach");
+          return;
+        }
+        var probe = ln;
+        while (probe < n - 1 && !cm.getLine(probe).trim()) probe++;
+        var indent = (cm.getLine(probe).match(/^[ \t]*/) || [""])[0];
+        cm.replaceRange(indent + text + "\n", { line: ln, ch: 0 }, null, "+coach");
+      }).catch(function () { delete claimed[o.id]; });
+    });
+  }
+
+  /* scratch tabs: read-only demos from the coach beside solution.py */
+  var files = $("ed-files"), scratchBox = $("ed-scratch"), scratchCm = null, scratchById = {}, curFile = "main";
+  function renderScratch(list, live) {
+    list.forEach(function (sc) {
+      scratchById[sc.id] = sc;
+      if (files.querySelector('[data-file="' + sc.id + '"]')) return;
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "ed-file ed-file-scratch" + (live ? " fresh" : "");
+      b.setAttribute("role", "tab");
+      b.setAttribute("aria-selected", "false");
+      b.dataset.file = String(sc.id);
+      b.textContent = sc.title;
+      b.title = sc.title + " (read-only)";
+      files.appendChild(b);
+      if (live) toast("Coach opened a tab: " + sc.title, "info");
+    });
+  }
+  function selectFile(id) {
+    curFile = String(id);
+    files.querySelectorAll(".ed-file").forEach(function (b) {
+      var on = b.dataset.file === curFile;
+      b.classList.toggle("on", on);
+      b.setAttribute("aria-selected", on ? "true" : "false");
+      if (on) b.classList.remove("fresh");
+    });
+    if (curFile === "main") { scratchBox.hidden = true; if (cm) setTimeout(function () { cm.refresh(); }, 0); return; }
+    var sc = scratchById[curFile];
+    if (!sc) return;
+    scratchBox.hidden = false;
+    if (!scratchCm && window.CodeMirror) {
+      scratchCm = CodeMirror($("ed-scratch-cm"), { value: "", mode: { name: "python", version: 3 }, theme: "coach",
+        lineNumbers: true, readOnly: true, indentUnit: 4, tabSize: 4 });
+    }
+    if (scratchCm) { scratchCm.setValue(sc.code); setTimeout(function () { scratchCm.refresh(); }, 0); }
+    else $("ed-scratch-cm").textContent = sc.code;
+  }
+  files.addEventListener("click", function (e) {
+    var b = e.target.closest(".ed-file");
+    if (b) selectFile(b.dataset.file);
+  });
+  $("scratch-copy").addEventListener("click", function () {
+    var sc = scratchById[curFile];
+    if (!sc) return;
+    var done = function () { toast("Copied.", "ok"); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(sc.code).then(done, function () { toast("Copy failed.", "error"); });
+  });
+
+  var stateBusy = false, stateAgain = false, stateLoaded = false;
+  function loadCodeState() {
+    if (closing) return;
+    if (stateBusy) { stateAgain = true; return; }
+    stateBusy = true;
+    var live = stateLoaded;
+    fetch("/code/state", { credentials: "same-origin", cache: "no-store" }).then(function (r) {
+      return r.ok ? r.json() : null;
+    }).then(function (st) {
+      if (!st || String(st.handout_id) !== hid || closing) return;
+      if (!getCode().trim()) {
+        var src = st.draft && st.draft.code ? st.draft.code : (st.stub || "");
+        if (src) {
+          setCode(src);
+          var cl = st.draft && st.draft.code ? st.draft.cursor_line : null;
+          if (cm && cl) cm.setCursor({ line: cl - 1, ch: 0 });
+          if (!(st.draft && st.draft.code) && live) toast("Starter code loaded.", "info");
+        }
+      }
+      var srv = st.draft ? st.draft.code : "";
+      if (!edReady) { edReady = true; if (getCode() !== srv) queueServerSave(); }
+      renderAnnotations(st.annotations || [], live);
+      applyOps(st.ops || []);
+      renderScratch(st.scratch || [], live);
+      stateLoaded = true;
+    }).catch(function () {}).then(function () {
+      stateBusy = false;
+      if (!edReady) edReady = true;
+      if (stateAgain) { stateAgain = false; loadCodeState(); }
+    });
+  }
+  loadCodeState();
+  if (window.coachLive) {
+    ["editor", "annotations", "code_ops", "scratch", "resync"].forEach(function (k) { coachLive.on(k, loadCodeState); });
+  }
+
+  /* the tests panel reads the editor through this */
+  window.coachEditor = { getValue: getCode, cm: cm };
 
   var savedTab = store.get(P.tab);
   if (savedTab && !wide.matches) setTab(savedTab, true);

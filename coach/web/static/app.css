@@ -1069,3 +1069,55 @@ body.app-solve .toasts { right: auto; left: var(--s4); bottom: var(--s4); }
 .help { max-width: 640px; margin: 0 auto; padding: 32px var(--gutter, 16px); line-height: 1.55; }
 .help h2 { margin-top: 1.6em; }
 .help pre { overflow-x: auto; padding: 12px; border: 1px solid var(--line); border-radius: 8px; }
+
+/* ---- editor tools: file tabs, coach boxes, highlights, coach comments, scratch ---------- */
+.ed-files { display: flex; gap: 2px; padding: 0 var(--s3); background: var(--pane); border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; flex: none; }
+.ed-files::-webkit-scrollbar { display: none; }
+.ed-file {
+  flex: none; height: 30px; padding: 0 10px; border: 0; border-bottom: 2px solid transparent;
+  background: transparent; color: var(--text-3); font: 500 12.5px/1 var(--f-code); cursor: pointer; white-space: nowrap;
+}
+.ed-file:hover { color: var(--text-2); }
+.ed-file.on { color: var(--text); border-bottom-color: var(--hl); }
+.ed-file-scratch::before { content: "◇ "; color: var(--text-3); }
+.ed-file.fresh { color: var(--hl-ink); }
+.ed-file.fresh::after { content: ""; display: inline-block; width: 6px; height: 6px; margin-left: 6px; border-radius: 50%; background: var(--hl); vertical-align: middle; }
+.ed-scratch { position: absolute; inset: 0; z-index: 6; display: flex; flex-direction: column; background: var(--sunk); }
+.ed-scratch[hidden] { display: none; }
+.ed-scratch-bar { display: flex; align-items: center; justify-content: space-between; gap: var(--s2); padding: 6px var(--s3); border-bottom: 1px solid var(--line); }
+.ed-scratch-ro { font-size: 12px; color: var(--text-3); }
+.ed-scratch-cm { flex: 1; min-height: 0; overflow: auto; font: 400 14px/1.65 var(--f-code); white-space: pre; }
+.ed-scratch-cm .CodeMirror { height: 100%; }
+
+.ann {
+  margin: 4px 16px 6px 12px; padding: 8px 10px 9px 12px; border-radius: var(--r-2);
+  background: var(--raised); border: 1px solid var(--line-2); border-left: 3px solid var(--hl);
+  font: 400 13.5px/1.45 var(--f-ui); color: var(--text); white-space: normal; max-width: 640px;
+}
+.ann-followup { border-left-color: color-mix(in srgb, var(--hl) 45%, var(--line-2)); background: var(--pane); color: var(--text-2); }
+.ann-note { border-left-color: var(--line-2); background: var(--pane); color: var(--text-2); }
+.ann-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 2px; }
+.ann-kind { font: 600 11px/1 var(--f-ui); letter-spacing: .04em; text-transform: uppercase; color: var(--hl-ink); }
+.ann-followup .ann-kind, .ann-note .ann-kind { color: var(--text-3); }
+.ann-x, .hl-x { border: 0; background: transparent; color: var(--text-3); cursor: pointer; font-size: 15px; line-height: 1; padding: 0 2px; }
+.ann-x:hover, .hl-x:hover { color: var(--text); }
+.ann code, .hl-chip code { font: 500 12.5px var(--f-code); padding: 0 3px; border-radius: 3px; background: var(--hl-wash); }
+.ann-reply { display: flex; gap: 6px; margin-top: 7px; }
+.ann-reply.busy { opacity: .6; pointer-events: none; }
+.ann-in {
+  flex: 1; min-width: 0; height: 30px; padding: 0 9px; border-radius: 6px; border: 1px solid var(--line-2);
+  background: var(--sunk); color: var(--text); font: 400 13px var(--f-ui); outline: none;
+}
+.ann-in:focus { border-color: var(--hl); }
+.ann-answer { margin-top: 6px; font-size: 13px; color: var(--text-2); }
+.ann-answer span { font-weight: 600; color: var(--text-3); }
+
+.cm-hl-line { background: color-mix(in srgb, var(--hl) 11%, transparent); }
+.cm-hl-gutter .CodeMirror-linenumber { color: var(--hl-ink); font-weight: 600; }
+.hl-chip {
+  display: inline-flex; align-items: center; gap: 4px; margin-left: 12px; padding: 0 4px 0 8px; border-radius: var(--r-pill);
+  background: var(--hl-wash); border: 1px solid var(--hl-line); color: var(--hl-ink);
+  font: 500 11.5px/18px var(--f-ui); vertical-align: 1px; white-space: nowrap;
+}
+.cm-s-coach .cm-coach-note { color: var(--hl-ink); font-style: normal; }
+.CodeMirror pre.CodeMirror-line.cm-coach-line { background: color-mix(in srgb, var(--hl) 6%, transparent); box-shadow: inset 2px 0 0 var(--hl-line); }

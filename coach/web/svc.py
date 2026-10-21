@@ -185,3 +185,16 @@ def _handout_user(s, handout_id):
     from ..models import Handout
     h = s.get(Handout, handout_id)
     return h.user_id if h else None
+
+
+# ---- editor tools (coach/editor.py via coach.service) -----------------------------------------
+def _delegate(name):
+    def method(self, *a, **kw):
+        return getattr(_s, name)(*a, **kw)
+    method.__name__ = name
+    return method
+
+
+for _n in ("editor_state", "save_draft", "read_code", "set_stub", "mark_op_applied",
+           "resolve_annotation", "reply_annotation", "annotations", "scratches"):
+    setattr(Svc, _n, _delegate(_n))

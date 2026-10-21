@@ -1,0 +1,35 @@
+<section class="tp" id="tp" data-open="1" data-state="idle" aria-label="Tests">
+  <div class="tp-bar">
+    <button class="tp-toggle" type="button" id="tp-toggle" aria-expanded="true" aria-controls="tp-body">
+      <svg class="tp-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg>
+      <span class="tp-title">Tests</span>
+      <span class="tp-count" id="tp-count">0</span>
+    </button>
+    <span class="tp-sum" id="tp-sum" aria-live="polite"></span>
+    <div class="tp-acts">
+      <button class="btn btn-quiet btn-sm tp-add-btn" type="button" id="tp-add" aria-expanded="false" aria-controls="tp-addf" aria-label="Add a test case"><span aria-hidden="true">+</span> Add case</button>
+      <button class="btn btn-sm tp-run" type="button" id="tp-run" title="Run the cases on your code (Ctrl+')">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.2-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z"/></svg>
+        Run <span class="kbd-hint"><kbd>Ctrl</kbd><kbd>'</kbd></span>
+      </button>
+    </div>
+  </div>
+  <div class="tp-body" id="tp-body">
+    <p class="tp-empty" id="tp-empty">No tests yet. Your coach adds the examples.</p>
+    <div class="tp-chips" id="tp-chips" role="tablist" aria-label="Test cases"></div>
+    <div class="tp-detail" id="tp-detail" role="tabpanel"></div>
+    <form class="tp-addf" id="tp-addf" autocomplete="off" hidden>
+      <div class="tp-addf-fields" id="tp-addf-fields"></div>
+      <label class="tp-field">
+        <span class="tp-k">Expected <em>optional</em></span>
+        <input class="tp-in" type="text" name="expected" id="tp-add-exp" spellcheck="false" autocapitalize="off" placeholder="leave empty to just see the output">
+      </label>
+      <p class="tp-addf-err" id="tp-addf-err" role="alert" hidden></p>
+      <div class="tp-addf-foot">
+        <span class="tp-hint">Values in LeetCode format: <code>[1,2,3]</code>, <code>"abc"</code>, <code>5</code>, <code>null</code></span>
+        <button class="btn btn-quiet btn-sm" type="button" id="tp-add-cancel">Cancel</button>
+        <button class="btn btn-sm" type="submit" id="tp-add-save">Add case</button>
+      </div>
+    </form>
+  </div>
+</section>

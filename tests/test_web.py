@@ -107,7 +107,7 @@ def test_solve_page_clean_and_flow(env):
     assert "COST" in r.text
     c.post("/solve/stuck", headers=h)
     kinds = [k for k, _ in fake.events]
-    assert kinds == ["approach", "chat", "submission", "stuck"]
+    assert kinds == ["handout", "approach", "chat", "submission", "stuck"]
     assert [m["role"] for m in fake.msgs] == ["user", "user"]
     fake.post_message(1, "coach", "what is the cost?")
     assert "what is the cost?" in c.get("/messages?since=0").text
@@ -254,3 +254,16 @@ def test_editor_locked_until_coach_unlocks(env):
     fake.lock_editor(1, 1)
     assert c.get("/messages?since=0").headers["X-Editor-Open"] == "0"
     assert 'data-stage="discuss"' in c.get("/solve").text
+
+
+def test_web_handout_tells_the_coach(env):
+    """Next problem pressed on the page -> the coach's queue gets a `handout` event."""
+    c, fake = env
+    login(c)
+    t = start(c)
+    kinds = [k for k, _ in fake.events]
+    assert kinds.count("handout") == 1
+    payload = dict(fake.events)["handout"]
+    assert payload["handout_id"] == fake.h.handout_id and payload["source"] == "web"
+    c.post("/solve", data={"csrf": t})  # a second press while one is open hands out nothing new
+    assert [k for k, _ in fake.events].count("handout") == 1

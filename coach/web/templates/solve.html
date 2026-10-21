@@ -3,6 +3,7 @@
 {% block body_class %}app-solve{% endblock %}
 {% block head %}
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
+<link rel="stylesheet" href="/static/tests.css">
 {% endblock %}
 {% block topbar %}
 {% set ck = clock or {} %}
@@ -110,6 +111,9 @@
           {% for l in ["Java", "C++", "JavaScript", "Go"] %}<span class="lang off" aria-disabled="true" title="{{ l }} is not available yet">{{ l }}<em>soon</em></span>{% endfor %}
         </div>
       </header>
+      <div class="ed-files" id="ed-files" role="tablist" aria-label="Files">
+        <button class="ed-file on" type="button" role="tab" aria-selected="true" data-file="main">solution.py</button>
+      </div>
       <div class="ed-wrap">
         <span class="ed-saved" id="ed-saved" aria-live="polite"></span>
         <label class="sr-only" for="code">Code</label>
@@ -118,7 +122,12 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
           <p>Code opens when your coach says the idea holds.</p>
         </div>
+        <div class="ed-scratch" id="ed-scratch" hidden>
+          <div class="ed-scratch-bar"><span class="ed-scratch-ro">read-only</span><button class="btn btn-quiet btn-sm" type="button" id="scratch-copy">Copy</button></div>
+          <div class="ed-scratch-cm" id="ed-scratch-cm"></div>
+        </div>
       </div>
+      {% include "_tests.html" %}
       <div class="lint-out" id="lint-out" aria-live="polite"></div>
       <footer class="ed-foot">
         <div class="verdict-wrap">
@@ -161,5 +170,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/selection/active-line.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/comment/comment.min.js"></script>
 <script src="/static/solve.js"></script>
+<script src="/static/tests.js"></script>
 <link rel="stylesheet" href="/static/viz.css">
 {% endblock %}

@@ -266,3 +266,35 @@ python -m coach.cli reveal HANDOUT_ID
 * Imported history has `attempts.source = "import"`; new rows are `"app"`. Re-running the
   migration refuses once `"app"` attempts exist unless `--force`.
 * The migrated owner user is `chandan` with no password: run `create-user chandan` to set it.
+
+## Tests panel (coach/tests_api.py, coach/runner.py; re-exported by service)
+
+```python
+runner.run(code, cases, mode, entry, timeout_s=3) -> [{case_index, ok, got, expected, error,
+                                                       stdout, ms}]
+#   subprocess: base python -I in a fresh temp dir, env PATH/SYSTEMROOT only, stdin closed,
+#   one wall timeout per run (unfinished cases: error "timeout"), stdout/got capped at 64 KB.
+#   ok None = case has no expected. Floats 1e-5; bool != int. Never imports his code.
+#   function: case {args: {name: value}, expected}, entry {class: "Solution", method}
+#   design:   case {ops, args, expected}, entry {class}; first op constructs (null output)
+#   options:  types {arg|"return": ListNode|TreeNode}, unordered true|"deep", inplace "arg", label
+set_tests(user_id, handout_id, cases, mode="function", entry=None) -> {ok, handout_id, count}
+#   replaces the coach cases (his stay) + test_specs row; LEAK GUARD on label/note; emits `tests`
+add_user_test(user_id, handout_id, case) -> {id, source: "user", ...case}   # emits `tests`
+delete_user_test(user_id, handout_id, case_id) -> {ok}                       # his only
+tests(user_id, handout_id) -> {handout_id, mode, entry, cases: [{id, source, ...}], last_run}
+#   last_run = his latest run {id, who, at, results, passed, failed, ran, total} | None
+run_tests(user_id, handout_id, code, who="user", cases=None) -> {run_id, results, passed,
+                                                                failed, ran, total}
+#   stores test_runs. who=user: emits `tests`, push_event "run" {handout_id, run_id, passed,
+#   failed, ran, total, results_summary}, posts system line "Ran tests: 2/3 passed.".
+#   who=coach: stored only (no event, no chat, not in last_run). cases= coach only, not stored.
+last_run(user_id, handout_id, who="user") -> run | None
+```
+
+Tables `test_specs` (handout_id pk, mode, entry), `test_cases` (source coach|user, case json),
+`test_runs` (who user|coach, code, results json). ui_event kind `tests` (ref = handout id).
+Web (login): `GET /tests`, `POST /tests/run` (code), `POST /tests/add` (case = json),
+`POST /tests/delete` (id); errors 400 {error}. Page: `_tests.html`, `static/tests.js`,
+`static/tests.css`. Bridge: `set_tests(cases, mode, entry)`, `run_tests(cases=None)` (his
+current draft via read_code, else the last submission; {error: "no code yet"}).

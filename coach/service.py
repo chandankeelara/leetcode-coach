@@ -846,8 +846,15 @@ def _set_editor(user_id, handout_id, on, message=None):
     return {"ok": True}
 
 
-def unlock_editor(user_id, handout_id):
-    """Open the code editor on his page. Posts the coach message "Editor open."."""
+def unlock_editor(user_id, handout_id, stub=None):
+    """Open the code editor on his page. Posts the coach message "Editor open.". With `stub`,
+    first stores it as the starter code (set_stub: leak-guarded; on a leak nothing opens and
+    {"ok": False, "error": "leak: ..."} comes back)."""
+    if stub is not None and str(stub).strip():
+        try:
+            set_stub(user_id, handout_id, stub)
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
     return _set_editor(user_id, handout_id, True, "Editor open.")
 
 
@@ -1023,3 +1030,19 @@ def session_summary(user_id, today=None):
         return {"today": day.isoformat(), "session_id": sess.id if sess else None,
                 "problems": problems, "attempts_without_handout": loose,
                 "skill_changes": skill_changes, "retry": retry, "trap_recall": traps}
+
+
+# ---- editor tools: draft sync, stub, annotations, coach comments, scratch (coach/editor.py) ---
+from .editor import (EDITOR_UI_KINDS, add_comment, annotate, annotations,  # noqa: E402
+                     clear_annotations, editor_state, get_stub, highlight, mark_op_applied,
+                     pending_ops, read_code, reply_annotation, resolve_annotation, save_draft,
+                     scratch, scratches, set_stub)
+
+UI_KINDS = UI_KINDS | EDITOR_UI_KINDS       # emit() reads the module global at call time
+
+
+# ---- tests panel: cases, his own cases, runs (coach/tests_api.py, coach/runner.py) --------
+from .tests_api import (TESTS_UI_KINDS, add_user_test, delete_user_test,  # noqa: E402
+                        last_run, run_tests, set_tests, tests)
+
+UI_KINDS = UI_KINDS | TESTS_UI_KINDS        # emit() reads the module global at call time

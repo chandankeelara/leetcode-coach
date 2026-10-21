@@ -309,7 +309,13 @@ async def solve(request: Request):
 async def solve_start(request: Request):
     sess, _ = await authed_form(request)
     if not service().current_handout(sess["uid"]):
-        service().next_problem(sess["uid"])
+        h = service().next_problem(sess["uid"])
+        # The coach only hears the queue: tell it a problem was handed out from the page, so it
+        # writes the statement and sets the tests instead of waiting for him.
+        if h is not None:
+            service().push_event(sess["uid"], "handout", {
+                "handout_id": h.handout_id, "number": h.number, "title": h.title,
+                "paraphrase": h.paraphrase, "mode": getattr(h, "mode", None), "source": "web"})
     return go("/solve")
 
 
@@ -660,3 +666,13 @@ async def flash_mw(request: Request, call_next):
     if key and request.method == "GET" and resp.status_code == 200:
         resp.delete_cookie(FLASH)
     return resp
+
+
+# ---- editor tools: draft sync, annotations, coach comments, scratch (editor_routes.py) -------
+from . import editor_routes  # noqa: E402
+app.include_router(editor_routes.router)
+
+
+# ---- tests panel: cases, his own cases, Run (tests_routes.py) --------------------------------
+from . import tests_routes  # noqa: E402
+app.include_router(tests_routes.router)

@@ -213,11 +213,14 @@ def show_visual(kind: str, spec: dict) -> dict:
 
 
 @mcp.tool()
-def unlock_editor() -> dict:
-    """Open the code editor on his page. Only after the idea holds."""
+def unlock_editor(stub: str | None = None) -> dict:
+    """Open the code editor on his page. Only after the idea holds. Optional stub: LeetCode's starter signature only, loaded if his editor is empty."""
     hid = _open_handout()
     if hid is None:
         return {"error": "no open problem"}
+    if stub:
+        r = svc().unlock_editor(uid(), hid, stub=stub)
+        return {"error": r["error"]} if not r.get("ok") and r.get("error") else r
     return svc().unlock_editor(uid(), hid)
 
 
@@ -297,7 +300,7 @@ async def _wait(timeout_s, ctx=None):
 async def wait_for_event(timeout_s: int = 1500, ctx: Context = None) -> dict:
     """Block until the learner does something on the website, then return {kind, payload};
     {kind: "timeout"} if nothing came. kind: approach | submission | stuck | skip | chat |
-    timer_over | clock_checkpoint. Call it at the END of every turn while he is working. Claude Code may move it
+    timer_over | clock_checkpoint | annotation_reply. Call it at the END of every turn while he is working. Claude Code may move it
     to the background after ~2 min; that is fine, the result still arrives."""
     return _jsonable(await _wait(timeout_s, ctx))
 
@@ -421,6 +424,121 @@ def session_summary() -> dict:
     """Today's handouts, attempts, reveals, ledger, queue and trap-quiz changes, for writing the
     session log. Progress talk: session end only, never while a problem is open."""
     return _jsonable(svc().session_summary(uid()))
+
+
+# ---- editor tools: his code, boxes under lines, comments, scratch tabs --------------------
+def _on_open(fn):
+    """Run fn(hid) on the open handout; ValueError -> {"error"}."""
+    hid = _open_handout()
+    if hid is None:
+        return {"error": "no open problem"}
+    try:
+        return _jsonable(fn(hid))
+    except ValueError as e:
+        return {"error": str(e)}
+
+
+@mcp.tool()
+def read_code() -> dict:
+    """His editor text as autosaved (code, cursor_line, updated_at) and his last submission {code, verdict, at} or null."""
+    return _on_open(lambda hid: svc().read_code(uid(), hid))
+
+
+@mcp.tool()
+def set_stub(code: str) -> dict:
+    """Store starter code (signature only); his editor loads it when empty. Leak-guarded."""
+    return _on_open(lambda hid: svc().set_stub(uid(), hid, code))
+
+
+@mcp.tool()
+def annotate(line: int, kind: str, text: str) -> dict:
+    """Box under line N (1-based) of his code. kind: question | followup | note. Questions get a reply input; a new question closes the old one. Leak-guarded."""
+    return _on_open(lambda hid: {"ok": True, "id": svc().annotate(uid(), hid, line, kind,
+                                                                  text)["id"]})
+
+
+@mcp.tool()
+def highlight(lines: list[int], why: str = "") -> dict:
+    """Shade lines (1-based) of his code, with why as a small chip. Leak-guarded."""
+    return _on_open(lambda hid: {"ok": True, "id": svc().highlight(uid(), hid, lines,
+                                                                   why)["id"]})
+
+
+@mcp.tool()
+def clear_annotations() -> dict:
+    """Remove every box and shading from his code."""
+    return _on_open(lambda hid: {"ok": True, "cleared": svc().clear_annotations(uid(), hid)})
+
+
+@mcp.tool()
+def add_comment(line: int, text: str) -> dict:
+    """Insert "# coach: <text>" above line N of his code (one line, 160 chars max). He can delete it. Leak-guarded."""
+    return _on_open(lambda hid: svc().add_comment(uid(), hid, line, text))
+
+
+@mcp.tool()
+def scratch(title: str, code: str) -> dict:
+    """Open a read-only tab beside his solution with a small demo. Never his solution. Leak-guarded."""
+    return _on_open(lambda hid: svc().scratch(uid(), hid, title, code))
+
+
+# ---- tests panel: set cases, run his current draft (coach/tests_api.py) --------------------
+def _current_code(hid):
+    """His current draft (service.read_code), else his last submission's code, else None."""
+    s = svc()
+    f = getattr(s, "read_code", None)
+    if f is not None:
+        try:
+            r = f(uid(), hid) or {}
+        except ValueError:
+            r = {}
+        if (r.get("code") or "").strip():
+            return r["code"]
+        sub = r.get("last_submission") or {}
+        if (sub.get("code") or "").strip():
+            return sub["code"]
+    try:
+        from sqlalchemy import select
+        from coach.db import session_scope
+        from coach.models import Event
+        with session_scope() as db:
+            for e in db.scalars(select(Event).where(Event.user_id == uid(),
+                                                    Event.kind == "submission")
+                                .order_by(Event.id.desc()).limit(200)):
+                p = e.payload or {}
+                if p.get("handout_id") == hid and (p.get("code") or "").strip():
+                    return p["code"]
+    except Exception:
+        pass
+    return None
+
+
+@mcp.tool()
+def set_tests(cases: list, mode: str = "function", entry: dict | None = None) -> dict:
+    """Put test cases in his Tests panel (replaces yours; his stay). mode function: case {args: {name: value}, expected}, entry {class: "Solution", method}. mode design: case {ops, args, expected}, entry {class}. Optional per case: types {arg|"return": "ListNode"|"TreeNode"}, unordered (true|"deep"), inplace (arg name), label. Labels go through the leak guard."""
+    hid = _open_handout()
+    if hid is None:
+        return {"error": "no open problem"}
+    try:
+        return _jsonable(svc().set_tests(uid(), hid, cases, mode, entry or {}))
+    except ValueError as e:
+        return {"error": str(e)}
+
+
+@mcp.tool()
+def run_tests(cases: list | None = None) -> dict:
+    """Run his CURRENT draft on the panel's cases, or on `cases` (same format, not stored). For you only: he never sees it. Returns passed, failed and per-case got/expected/error."""
+    hid = _open_handout()
+    if hid is None:
+        return {"error": "no open problem"}
+    code = _current_code(hid)
+    if code is None:
+        return {"error": "no code yet"}
+    try:
+        r = svc().run_tests(uid(), hid, code, "coach", cases=cases)
+    except ValueError as e:
+        return {"error": str(e)}
+    return _jsonable({k: r[k] for k in ("passed", "failed", "ran", "total", "results")})
 
 
 def main():

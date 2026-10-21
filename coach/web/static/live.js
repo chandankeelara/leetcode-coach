@@ -12,7 +12,9 @@
   var subs = {}, stateSubs = [], es = null, state = "connecting";
   var lastId = null, backoff = 1000, retryT = null, fallbackT = null, errors = 0;
   var FALLBACK_MS = 20000, MAX_BACKOFF = 30000;
-  var KINDS = ["hello", "message", "statement", "visual", "editor", "handout", "clock", "presence"];
+  var KINDS = ["hello", "message", "statement", "visual", "editor", "handout", "clock", "presence",
+    /* editor tools */ "annotations", "code_ops", "scratch",
+    /* tests panel */ "tests"];
 
   function dispatch(kind, data) {
     (subs[kind] || []).slice().forEach(function (fn) {

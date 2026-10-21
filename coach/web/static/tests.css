@@ -1,0 +1,112 @@
+/* Tests panel under the editor (_tests.html, tests.js). Uses the app tokens (app.css). */
+.tp {
+  flex: none; display: flex; flex-direction: column; min-height: 0;
+  max-height: 44%;
+  border-top: 1px solid var(--line); background: var(--pane);
+}
+.tp[data-open="0"] { max-height: none; }
+.tp-bar {
+  flex: none; display: flex; align-items: center; gap: var(--s2);
+  min-height: 44px; padding: 4px var(--s3) 4px var(--s2);
+}
+.tp-toggle {
+  display: inline-flex; align-items: center; gap: 7px;
+  height: 32px; padding: 0 8px; border: 0; border-radius: var(--r-2);
+  background: transparent; color: var(--text); cursor: pointer;
+  font: 600 14px/1 var(--f-ui);
+}
+.tp-toggle:hover { background: var(--raised); }
+.tp-chev { width: 15px; height: 15px; color: var(--text-3); transition: transform var(--d) var(--ease-out); }
+.tp[data-open="0"] .tp-chev { transform: rotate(180deg); }
+.tp-count {
+  min-width: 20px; height: 20px; padding: 0 6px; border-radius: var(--r-pill);
+  display: inline-grid; place-items: center;
+  font: 500 11.5px/1 var(--f-num); color: var(--text-2); background: var(--raised); border: 1px solid var(--line);
+}
+.tp-sum { display: inline-flex; align-items: baseline; gap: 8px; min-width: 0; font-size: 13px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tp-sum-n { font-weight: 600; }
+.tp-sum-ms { font: 400 12px/1 var(--f-num); font-stretch: 87.5%; }
+.tp[data-state="pass"] .tp-sum-n { color: var(--ok); }
+.tp[data-state="fail"] .tp-sum-n { color: var(--danger); }
+.tp[data-state="running"] .tp-sum { color: var(--text-2); }
+.tp-acts { display: flex; align-items: center; gap: 4px; margin-left: auto; flex: none; }
+.tp-run svg { width: 13px; height: 13px; color: var(--ok); }
+.tp-run.busy svg { animation: tp-pulse 0.9s ease-in-out infinite; }
+@keyframes tp-pulse { 50% { opacity: .3; } }
+
+.tp-body { flex: 1; min-height: 0; overflow-y: auto; padding: 0 var(--s4) var(--s3); overscroll-behavior: contain; }
+.tp[data-open="0"] .tp-body { display: none; }
+.tp-empty { margin: 2px 0 var(--s2); font-size: 13.5px; color: var(--text-3); }
+
+.tp-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 0 var(--s3); }
+.tp-chip {
+  display: inline-flex; align-items: center; gap: 7px;
+  height: 30px; padding: 0 11px; border-radius: var(--r-2);
+  border: 1px solid var(--line); background: transparent; color: var(--text-2); cursor: pointer;
+  font: 600 13px/1 var(--f-ui); white-space: nowrap;
+  transition: background var(--d-fast), border-color var(--d-fast), color var(--d-fast);
+}
+.tp-chip:hover { background: var(--raised); color: var(--text); }
+.tp-chip[aria-selected="true"] { background: var(--raised); border-color: var(--line-2); color: var(--text); }
+.tp-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--line-2); flex: none; }
+.tp-chip[data-state="pass"] .tp-dot { background: var(--ok); }
+.tp-chip[data-state="fail"] .tp-dot, .tp-chip[data-state="err"] .tp-dot { background: var(--danger); }
+.tp-chip[data-state="tle"] .tp-dot { background: var(--warn); }
+.tp-chip[data-state="ran"] .tp-dot { background: var(--hl); }
+.tp-mine { font-style: normal; font-size: 10.5px; font-weight: 600; color: var(--text-3); padding: 2px 5px; border-radius: 4px; border: 1px solid var(--line); }
+
+.tp-detail { display: grid; gap: var(--s2); }
+.tp-dhead { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; min-height: 24px; }
+.tp-label { font-size: 13.5px; color: var(--text-2); }
+.tp-ms { font: 400 12px/1 var(--f-num); font-stretch: 87.5%; color: var(--text-3); }
+.tp-del { margin-left: auto; font-size: 13px; }
+.tp-kv { display: grid; gap: 4px; min-width: 0; }
+.tp-k { font: 500 12.5px/1.2 var(--f-ui); color: var(--text-3); }
+.tp-k em { font-style: normal; font-weight: 400; opacity: .8; }
+.tp-v {
+  margin: 0; padding: 8px 11px; border-radius: var(--r-2);
+  background: var(--sunk); border: 1px solid var(--line);
+  font: 400 13.5px/1.5 var(--f-code); color: var(--text);
+  white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere;
+  max-height: 180px; overflow: auto;
+}
+.tp-out.tp-pass .tp-v { border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
+.tp-out.tp-fail .tp-v { border-color: color-mix(in srgb, var(--danger) 45%, transparent); background: var(--danger-wash); }
+.tp-errv .tp-v { color: var(--danger); background: var(--danger-wash); border-color: transparent; }
+.tp-errv .tp-k { color: var(--danger); }
+.tp-stdout .tp-v { color: var(--text-2); font-size: 12.5px; }
+
+.tp-addf { display: grid; gap: var(--s2); margin-top: var(--s3); padding: var(--s3); border: 1px dashed var(--line-2); border-radius: var(--r-3); }
+.tp-addf-fields { display: grid; gap: var(--s2); }
+.tp-field { display: grid; gap: 4px; }
+.tp-in {
+  width: 100%; min-height: 36px; padding: 0 10px; border-radius: var(--r-2);
+  border: 1px solid var(--line-2); background: var(--sunk); color: var(--text);
+  font: 400 13.5px/1.4 var(--f-code); outline: none;
+}
+.tp-in:focus { border-color: var(--focus); box-shadow: 0 0 0 3px var(--hl-wash); }
+.tp-addf-err { margin: 0; font-size: 13px; color: var(--danger); }
+.tp-addf-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--s2); }
+.tp-hint { margin: 0 auto 0 0; font-size: 12.5px; color: var(--text-3); }
+.tp-hint code { font-family: var(--f-code); font-size: 0.95em; color: var(--text-2); }
+
+@media (max-width: 1099.98px) {
+  .tp { max-height: 52%; }
+}
+@media (max-width: 640px) {
+  .tp { max-height: 40%; }
+  .tp-bar { padding-right: var(--s2); gap: 4px; }
+  .tp-sum-ms { display: none; }
+  .tp .tp-add-btn { font-size: 0; gap: 0; width: 34px; padding: 0; }
+  .tp .tp-add-btn span { font-size: 19px; font-weight: 500; }
+  .tp-body { padding: 0 var(--s3) var(--s3); }
+  .tp-chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .tp-chips::-webkit-scrollbar { display: none; }
+  .tp-chip { height: 32px; }
+  .tp-hint { flex-basis: 100%; }
+  .tp-v { font-size: 13px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tp-chev, .tp-chip { transition: none; }
+  .tp-run.busy svg { animation: none; }
+}
