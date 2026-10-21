@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Connect your coach · Coach{% endblock %}
+{% block body %}
+<section class="help connect">
+  <h1>Connect your coach</h1>
+  <p>Your coach is Claude Code on your computer. It reaches this site with a token. Make one token per computer.</p>
+
+  {% if new %}
+  <div class="token-new" role="status">
+    <h2>New token: {{ new.label }}</h2>
+    <p><strong>Copy it now.</strong> It is shown once and stored only as a hash.</p>
+    <pre><code data-token>{{ new.token }}</code></pre>
+  </div>
+  {% endif %}
+  {% if error %}<p class="err">{{ error }}</p>{% endif %}
+
+  <h2>1. Add the coach to Claude Code</h2>
+  <p>In any shell:</p>
+  <pre><code>{{ cmds.mcp }}</code></pre>
+  <p>Check it: <code>claude mcp list</code> shows <code>coach</code> as connected.</p>
+
+  <h2>If your network blocks MCP</h2>
+  <p>Run the small local bridge instead. It talks to this site over plain HTTPS. Needs Python 3.12 and this app's package installed (<code>pip install</code> the repo).</p>
+  <pre><code>{{ cmds.forward }}</code></pre>
+
+  {% if not new %}<p>Replace <code>&lt;your token&gt;</code> with a new token from below.</p>{% endif %}
+
+  <h2>2. Start a session</h2>
+  <p>Open Claude Code and type <code>/coach</code> (with the plugin: <code>/leetcode-coach:coach</code>). Come back here. The dot turns green when the coach is waiting.</p>
+
+  <h2>Your tokens</h2>
+  <form method="post" action="/connect/token" class="grp">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>Label <input name="label" maxlength="80" placeholder="Laptop"></label>
+    <button class="btn btn-primary" type="submit">New token</button>
+  </form>
+  {% if tokens %}
+  <table class="tokens">
+    <thead><tr><th>Label</th><th>Created</th><th>Last used</th><th></th></tr></thead>
+    <tbody>
+    {% for t in tokens %}
+      <tr{% if t.revoked_at %} class="muted"{% endif %}>
+        <td>{{ t.label or "-" }}</td>
+        <td>{{ t.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
+        <td>{{ t.last_used_at.strftime("%Y-%m-%d %H:%M") if t.last_used_at else "never" }}</td>
+        <td>{% if t.revoked_at %}revoked{% else %}
+          <form method="post" action="/connect/revoke/{{ t.id }}">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <button class="btn btn-quiet btn-sm" type="submit">Revoke</button>
+          </form>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p>No tokens yet.</p>
+  {% endif %}
+  <p><a href="/help/connect">How it works</a> · <a href="/dashboard">Dashboard</a></p>
+</section>
+{% endblock %}

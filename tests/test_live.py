@@ -71,11 +71,11 @@ def test_coach_seen_presence(world):
     from datetime import timezone
     now = datetime.now(timezone.utc)
     before = len(_rows())
-    service.coach_seen(now)
-    assert _new_kinds(before) == [(None, "presence", None)]
-    service.coach_seen(now + timedelta(seconds=1))           # inside the 5 s throttle
+    service.coach_seen(world, now)
+    assert _new_kinds(before) == [(world, "presence", None)]
+    service.coach_seen(world, now + timedelta(seconds=1))    # inside the 5 s throttle
     assert len(_new_kinds(before)) == 1
-    service.coach_seen(now + timedelta(seconds=6))
+    service.coach_seen(world, now + timedelta(seconds=6))
     assert len(_new_kinds(before)) == 2
 
 
@@ -206,8 +206,8 @@ def test_stream_presence_flip(web):
     from datetime import timezone
     c, uid = web
     since = service.ui_last_id()
-    service.coach_seen(datetime.now(timezone.utc))           # offline -> online
-    service.coach_seen(datetime.now(timezone.utc) + timedelta(seconds=6))   # no flip
+    service.coach_seen(uid, datetime.now(timezone.utc))      # offline -> online
+    service.coach_seen(uid, datetime.now(timezone.utc) + timedelta(seconds=6))   # no flip
     body = c.get(f"/stream?since={since}&max_events=2&max_s=1").text
     evs = _events(body)
     assert evs[0]["event"] == "hello"

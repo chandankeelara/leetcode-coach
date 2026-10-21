@@ -17,7 +17,9 @@ env vars, HTTPS), `docs/CUTOVER.md` (retiring the markdown repo) and `docs/PRODU
 
 Env: `COACH_SECRET` signs the session cookie (generated into `.env` on first run if unset).
 `COACH_DB` picks the SQLite file (default `./coach.db`). `COACH_DB_URL` takes any SQLAlchemy URL
-and wins over `COACH_DB`. `COACH_USER` picks the bridge's user.
+and wins over `COACH_DB`. `COACH_USER` picks the local dev bridge's user. `COACH_PUBLIC_URL` (optional) is the
+site URL the `/connect` page puts in the commands (default: the URL the page was opened on).
+Students connect their Claude Code with a token from `/connect`: see `bridge/README.md`.
 
 Backup: `./scripts/backup.ps1` (keeps the newest 30).
 

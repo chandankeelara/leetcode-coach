@@ -410,32 +410,32 @@ def test_missed_trap_restarts_refire_count(world):
 
 
 def test_wait_event_heartbeat(world):
-    assert service.coach_online()["last_seen"] is None
+    assert service.coach_online(world)["last_seen"] is None
     asyncio.run(service.wait_event(world, timeout_s=0.1, poll_s=0.02))
-    c = service.coach_online()
+    c = service.coach_online(world)
     assert c["last_seen"] and c["online"] and c["reason"] == "heartbeat"
 
 
 def test_coach_online_by_last_seen(world):
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc)
-    service.coach_seen(now - timedelta(seconds=60))
-    assert service.coach_online(now)["online"] is True
-    service.coach_seen(now - timedelta(seconds=120))
-    r = service.coach_online(now)
+    service.coach_seen(world, now - timedelta(seconds=60))
+    assert service.coach_online(world, now)["online"] is True
+    service.coach_seen(world, now - timedelta(seconds=120))
+    r = service.coach_online(world, now)
     assert r["online"] is False and r["last_seen"]
 
 
 def test_coach_online_by_recent_message(world):
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc)
-    assert service.coach_online(now)["online"] is False
+    assert service.coach_online(world, now)["online"] is False
     service.post_message(world, "user", "hi")
-    assert service.coach_online(now)["online"] is False       # only coach messages count
+    assert service.coach_online(world, now)["online"] is False   # only coach messages count
     service.post_message(world, "coach", "hello")
-    r = service.coach_online(now)
+    r = service.coach_online(world, now)
     assert r["online"] is True and r["reason"] == "recent_message"
-    assert service.coach_online(now + timedelta(minutes=11))["online"] is False
+    assert service.coach_online(world, now + timedelta(minutes=11))["online"] is False
 
 
 def test_editor_gate(world):

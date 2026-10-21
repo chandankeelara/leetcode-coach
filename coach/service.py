@@ -668,9 +668,22 @@ def _retry_reason(actual, target, bugs, hints, optimal, derived_cold, abandoned,
     return f"{text}. {notes}".strip() if notes else text
 
 
-def log_attempt(user_id, handout_id=None, number=None, actual_min=None, bugs=0, optimal=True,
-                derived_cold=True, hints=0, notes="", abandoned=False, target_min=None,
-                day=None):
+def log_attempt(user_id, handout_id=None, number=None, **kw):
+    """See _log_attempt. A second log of the same handout is refused: the existing attempt
+    comes back with already_logged True and nothing changes (no row, no retry, no backlog).
+    Two coaches racing past the check meet the unique index and get the same answer."""
+    from sqlalchemy.exc import IntegrityError
+    try:
+        return _log_attempt(user_id, handout_id=handout_id, number=number, **kw)
+    except IntegrityError:
+        if handout_id is None:
+            raise
+        return _log_attempt(user_id, handout_id=handout_id, number=number, **kw)
+
+
+def _log_attempt(user_id, handout_id=None, number=None, actual_min=None, bugs=0, optimal=True,
+                 derived_cold=True, hints=0, notes="", abandoned=False, target_min=None,
+                 day=None):
     """Record an attempt. The outcome is computed here (rules.outcome); nobody types "clean".
 
     actual_min left out: the coach's clock, round(elapsed / 60), at least 1 (0 with no
@@ -686,6 +699,8 @@ def log_attempt(user_id, handout_id=None, number=None, actual_min=None, bugs=0, 
         h = None
         if handout_id is not None:
             h = s.get(Handout, handout_id)
+            if h is None or h.user_id != user_id:
+                raise ValueError(f"no handout {handout_id}")
             number = h.problem_number
         elif number is not None:
             h = s.scalars(select(Handout).where(
@@ -693,6 +708,14 @@ def log_attempt(user_id, handout_id=None, number=None, actual_min=None, bugs=0, 
                 Handout.status == "open").order_by(Handout.id.desc())).first()
         if number is None:
             raise ValueError("log_attempt needs a handout_id or a problem number")
+        if h is not None:
+            prev = s.scalars(select(Attempt).where(Attempt.handout_id == h.id)
+                             .order_by(Attempt.id)).first()
+            if prev is not None:         # second log of one handout: refuse, change nothing
+                return {"attempt_id": prev.id, "outcome": prev.outcome, "retry": "none",
+                        "problem_number": prev.problem_number, "actual_min": prev.actual_min,
+                        "wall_min": prev.wall_min, "clock_note": prev.clock_note,
+                        "already_logged": True}
         prob = s.get(Problem, number)
         if prob is None:
             raise ValueError(f"unknown problem {number}; add it to the problems table first")
@@ -909,26 +932,26 @@ def _drain(user_id):
                  "created_at": e.created_at.isoformat()} for e in rows]
 
 
-SEEN_KEY = "coach_last_seen"
 SEEN_EVERY_S = 5.0          # heartbeat write throttle while polling
 ONLINE_WINDOW_S = 90        # heartbeat this fresh = coach is connected
 MSG_WINDOW_S = 600          # fallback: a coach message this recent = coach is around
 CHECKPOINT_EVERY_S = 1.0    # how often wait_event checks the clock checkpoints
 
 
-def coach_seen(now=None):
-    """Heartbeat: record that the coach is polling right now (config.coach_last_seen, UTC iso)."""
+def coach_seen(user_id, now=None):
+    """Heartbeat: this user's coach is connected right now (users.coach_last_seen, UTC iso).
+    Called on every authenticated coach-tool request and every wait_event poll. Emits a
+    `presence` ui event for that user's pages at most once per SEEN_EVERY_S."""
     now = now or datetime.now(timezone.utc)
     with session_scope() as s:
-        row = s.get(Config, SEEN_KEY)
-        prev = _parse_utc(row.value if row else None)
-        if row is None:
-            s.add(Config(key=SEEN_KEY, value=now.isoformat()))
-        else:
-            row.value = now.isoformat()
-        # presence signal for open pages, at most once per SEEN_EVERY_S
-        if prev is None or abs((now - prev).total_seconds()) >= SEEN_EVERY_S * 0.9:
-            emit(None, "presence", None, s)
+        u = s.get(User, user_id)
+        if u is None:
+            return
+        prev = _parse_utc(u.coach_last_seen)
+        if prev is not None and 0 <= (now - prev).total_seconds() < SEEN_EVERY_S * 0.9:
+            return                       # throttled: no write, no signal
+        u.coach_last_seen = now.isoformat()
+        emit(user_id, "presence", None, s)
 
 
 def _parse_utc(iso):
@@ -939,24 +962,20 @@ def _parse_utc(iso):
     return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
 
 
-def coach_online(now=None):
-    """{online, last_seen (iso|None), reason}. Online when the heartbeat is under 90 s old, or
-    (older bridge builds that never heartbeat) a coach message was posted in the last 10 min."""
+def coach_online(user_id, now=None):
+    """{online, last_seen (iso|None), reason} for THIS user's coach. Online when the heartbeat
+    is under 90 s old, or (older bridge builds that never heartbeat) a coach message to this
+    user was posted in the last 10 min."""
     now = now or datetime.now(timezone.utc)
     with session_scope() as s:
-        row = s.get(Config, SEEN_KEY)
-        seen = row.value if row else None
-        newest = s.scalars(select(CoachMessage.created_at).where(CoachMessage.role == "coach")
-                           .order_by(CoachMessage.id.desc()).limit(1)).first()
-    if seen:
-        try:
-            ts = datetime.fromisoformat(seen)
-            if ts.tzinfo is None:
-                ts = ts.replace(tzinfo=timezone.utc)
-            if (now - ts).total_seconds() <= ONLINE_WINDOW_S:
-                return {"online": True, "last_seen": seen, "reason": "heartbeat"}
-        except (TypeError, ValueError):
-            pass
+        u = s.get(User, user_id) if user_id is not None else None
+        seen = u.coach_last_seen if u else None
+        newest = s.scalars(select(CoachMessage.created_at).where(
+            CoachMessage.role == "coach", CoachMessage.user_id == user_id)
+            .order_by(CoachMessage.id.desc()).limit(1)).first()
+    ts = _parse_utc(seen) if seen else None
+    if ts is not None and (now - ts).total_seconds() <= ONLINE_WINDOW_S:
+        return {"online": True, "last_seen": seen, "reason": "heartbeat"}
     if newest is not None:          # message times are naive local
         local_now = now.astimezone().replace(tzinfo=None)
         if (local_now - newest).total_seconds() <= MSG_WINDOW_S:
@@ -974,7 +993,7 @@ async def wait_event(user_id, timeout_s=25.0, poll_s=0.25):
     while True:
         if beat is None or loop.time() - beat >= SEEN_EVERY_S:
             beat = loop.time()
-            coach_seen()
+            coach_seen(user_id)
         if checked is None or loop.time() - checked >= CHECKPOINT_EVERY_S:
             checked = loop.time()
             _fire_checkpoints(user_id)

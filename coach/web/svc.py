@@ -139,8 +139,8 @@ class Svc:
     def burn_pattern(self, user_id, slug, reason):
         return _s.burn_pattern(user_id, slug, reason)
 
-    def coach_online(self):
-        return _s.coach_online()
+    def coach_online(self, user_id):
+        return _s.coach_online(user_id)
 
     def push_event(self, user_id, kind, payload):
         return _s.push_event(user_id, kind, payload)

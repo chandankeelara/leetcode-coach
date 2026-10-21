@@ -50,6 +50,11 @@ from .. import viz  # noqa: E402
 from . import api_ext  # noqa: E402
 app.include_router(api_ext.router)
 
+# The coach's tools for each student's Claude Code: /mcp (remote MCP) and /tools (REST).
+# Bearer coach token, no cookie, no CSRF (see remote.py).
+from . import remote  # noqa: E402
+remote.mount(app)
+
 _FENCE = re.compile(r"```[a-zA-Z0-9]*\n?(.*?)```", re.S)
 _TICK = re.compile(r"`([^`\n]+)`")
 _BOLD = re.compile(r"\*\*([^*\n]+)\*\*")
@@ -208,7 +213,8 @@ def render(request, name, sess=None, **ctx):
     ctx.setdefault("authed", sess is not None)
     ctx.setdefault("nav", "neutral")
     if name in ("solve.html", "interstitial.html", "waiting.html"):
-        ctx.setdefault("coach_online", bool(service().coach_online()["online"]))
+        ctx.setdefault("coach_online", bool(
+            service().coach_online(sess["uid"] if sess else None)["online"]))
     return templates.TemplateResponse(request, name, ctx)
 
 
@@ -329,7 +335,7 @@ async def solve_start(request: Request):
         return go("/solve")
     if needs_plan(uid):
         return go("/onboarding")
-    if service().coach_online()["online"]:
+    if service().coach_online(uid)["online"]:
         service().request_next(uid)
     return go("/next")
 
@@ -339,7 +345,7 @@ async def next_wait(request: Request, none: int = 0):
     sess = require(request)
     if service().current_handout(sess["uid"]):
         return go("/solve")
-    online = bool(service().coach_online()["online"]) and not none
+    online = bool(service().coach_online(sess["uid"])["online"]) and not none
     return render(request, "waiting.html", sess, coach_online=online, none_left=bool(none))
 
 
@@ -452,7 +458,7 @@ async def messages(request: Request, since: int = 0):
     resp = templates.TemplateResponse(request, "_messages.html", {"msgs": msgs, "last": last})
     resp.headers["X-Last-Id"] = str(last)
     resp.headers["X-Open-Handout"] = str(h.handout_id) if h else ""
-    resp.headers["X-Coach-Online"] = "1" if service().coach_online()["online"] else "0"
+    resp.headers["X-Coach-Online"] = "1" if service().coach_online(sess["uid"])["online"] else "0"
     resp.headers["X-Editor-Open"] = "1" if _editor_open(sess["uid"], h) else "0"
     return resp
 
@@ -502,7 +508,7 @@ def _last_message_id(uid):
 def _hello(uid):
     st = handout_state(uid)
     return {"open_handout_id": st["open_handout_id"], "editor_open": st["editor_open"],
-            "started_at": st["started_at"], "online": bool(service().coach_online()["online"]),
+            "started_at": st["started_at"], "online": bool(service().coach_online(uid)["online"]),
             "last_message_id": _last_message_id(uid)}
 
 
@@ -542,7 +548,7 @@ async def stream(request: Request, since: int | None = None, max_events: int = 0
             for r in rows:
                 cursor = r["id"]
                 if r["kind"] == "presence":
-                    now_on = bool((await run_in_threadpool(svc.coach_online))["online"])
+                    now_on = bool((await run_in_threadpool(svc.coach_online, uid))["online"])
                     last_presence = loop.time()
                     if now_on == online:
                         continue
@@ -556,7 +562,7 @@ async def stream(request: Request, since: int | None = None, max_events: int = 0
             now = loop.time()
             if now - last_presence >= STREAM_PRESENCE_S:
                 last_presence = now
-                now_on = bool((await run_in_threadpool(svc.coach_online))["online"])
+                now_on = bool((await run_in_threadpool(svc.coach_online, uid))["online"])
                 if now_on != online:
                     online = now_on
                     yield _sse("presence", {"ref_id": None, "online": online}, cursor)
@@ -573,15 +579,70 @@ async def stream(request: Request, since: int | None = None, max_events: int = 0
 
 @app.get("/coach/status")
 async def coach_status(request: Request):
-    require(request)
-    c = service().coach_online()
+    sess = require(request)
+    c = service().coach_online(sess["uid"])
     return JSONResponse({"online": bool(c["online"]), "last_seen": c.get("last_seen")})
 
 
 @app.get("/help/connect", response_class=HTMLResponse)
 async def help_connect(request: Request):
     sess = require(request)
-    return render(request, "help_connect.html", sess)
+    return render(request, "help_connect.html", sess, site=site_url(request))
+
+
+# ---- connect: coach tokens for the student's Claude Code ------------------------------------
+def site_url(request):
+    """This site's public base URL: env COACH_PUBLIC_URL, else what the request came in on."""
+    env = (os.environ.get("COACH_PUBLIC_URL") or "").strip().rstrip("/")
+    return env or str(request.base_url).rstrip("/")
+
+
+def connect_commands(site, token):
+    """The exact commands a student runs, token filled in (or a placeholder)."""
+    tok = token or "<your token>"
+    return {
+        "mcp": f'claude mcp add --transport http coach {site}/mcp '
+               f'--header "Authorization: Bearer {tok}"',
+        "forward": f"claude mcp add --transport stdio coach -- "
+                   f"python -m bridge.server --remote {site} --token {tok}",
+    }
+
+
+def _connect_page(request, sess, new=None, error=None):
+    from .. import tokens
+    site = site_url(request)
+    return render(request, "connect.html", sess, nav="full", site=site, new=new, error=error,
+                  tokens=tokens.list_for(sess["uid"]),
+                  cmds=connect_commands(site, new["token"] if new else None))
+
+
+@app.get("/connect", response_class=HTMLResponse)
+async def connect(request: Request):
+    sess = require(request)
+    return await run_in_threadpool(_connect_page, request, sess)
+
+
+@app.post("/connect/token", response_class=HTMLResponse)
+async def connect_new_token(request: Request):
+    """New token: shown on this one response only (it is stored hashed)."""
+    from .. import tokens
+    sess, form = await authed_form(request)
+    label = (form.get("label") or "").strip() or "Claude Code"
+    new = await run_in_threadpool(tokens.create, sess["uid"], label)
+    resp = await run_in_threadpool(_connect_page, request, sess, new)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.post("/connect/revoke/{token_id}")
+async def connect_revoke(request: Request, token_id: int):
+    from .. import tokens
+    sess, _ = await authed_form(request)
+    try:
+        await run_in_threadpool(tokens.revoke, sess["uid"], token_id)
+    except ValueError:
+        raise HTTPException(404, "no such token")
+    return go("/connect")
 
 
 # ---- log and reveal ------------------------------------------------------------------------

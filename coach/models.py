@@ -1,8 +1,8 @@
 """Tables. Plain SQLAlchemy 2 declarative, sqlite. `coach.db.init()` creates them."""
 from datetime import date, datetime
 
-from sqlalchemy import (JSON, Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text,
-                        UniqueConstraint)
+from sqlalchemy import (JSON, Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, String,
+                        Text, UniqueConstraint, text)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -20,6 +20,9 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(64), unique=True)
     password_hash: Mapped[str] = mapped_column(String(255))     # argon2; "!" = no password yet
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    # Coach presence heartbeat (UTC iso): written by every authenticated coach call and every
+    # wait_event poll for THIS user. See service.coach_seen / coach_online.
+    coach_last_seen: Mapped[str | None] = mapped_column(String(40), nullable=True)
 
 
 class Plan(Base):
@@ -121,6 +124,12 @@ class Attempt(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
     wall_min: Mapped[int | None] = mapped_column(Integer, nullable=True)   # wall clock from start
     clock_note: Mapped[str | None] = mapped_column(Text, nullable=True)   # "2 pauses (...), 1 reset"
+
+    # One attempt per handout (two coaches once both logged the same one). Partial: imported
+    # rows have no handout. db.init adds it to an existing database when the data allows.
+    __table_args__ = (Index("uq_attempts_handout", "handout_id", unique=True,
+                            sqlite_where=text("handout_id IS NOT NULL"),
+                            postgresql_where=text("handout_id IS NOT NULL")),)
 
 
 class ClockEvent(Base):
@@ -383,3 +392,16 @@ class Submission(Base):
     verdict: Mapped[str | None] = mapped_column(String(32), nullable=True)
     judged: Mapped[object] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class CoachToken(Base):
+    """Bearer tokens for the website's coach tools (/mcp and /tools). Only the sha256 of the
+    token is stored; the token itself is shown once, when created."""
+    __tablename__ = "coach_tokens"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    label: Mapped[str] = mapped_column(String(80), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

@@ -237,9 +237,22 @@ emit(user_id: int | None, kind: str, ref_id: int | None = None, s=None) -> int
 #     handout   next_problem when a new handout is made or force_new skips one, skip_problem,
 #               log_attempt, reset_timer                          ref = handout id
 #     clock     clock (every action)                              ref = handout id
-#     presence  coach_seen, at most once per 5 s                  user_id None
+#     presence  coach_seen(user_id), at most once per 5 s          that user
 ui_events_since(user_id, since_id=0, limit=200) -> list   # [{"id","kind","ref_id"}] (his + broadcast)
 ui_last_id() -> int
+
+# coach presence (per user: users.coach_last_seen, UTC iso)
+coach_seen(user_id, now=None)          # heartbeat; every authenticated /mcp or /tools request
+                                       # and every wait_event poll; write throttled to 5 s
+coach_online(user_id, now=None) -> {"online", "last_seen", "reason"}
+#   online: heartbeat <= 90 s old, or a coach message to THIS user in the last 10 min.
+
+# one attempt per handout
+log_attempt(...) for a handout that already has an attempt -> the existing attempt's
+#   {attempt_id, outcome, problem_number, actual_min, wall_min, clock_note, retry: "none",
+#   already_logged: True}; nothing written. Unique index uq_attempts_handout (partial:
+#   handout_id not null); db.init adds it to old databases unless duplicates already exist.
+#   A handout of another user -> ValueError("no handout N").
 ```
 
 Exception: `service.RevealBlocked`.
@@ -251,14 +264,22 @@ Exception: `service.RevealBlocked`.
   lacks (additive, nullable only). First use: `skills.updated_on`.
 * `coach.models`: all tables (users, plans, patterns, problems, attempts, handouts, sessions, skills,
   skill_events, retry_items, pattern_state, burned, oa_sims, trap_recall, config, events,
-  coach_messages, visuals, ui_events).
+  coach_messages, visuals, ui_events, coach_tokens).
 * `coach.lint.lint(src) -> [(line, kind, msg)]`, kinds USELESS, NONE-ASSIGN, COST, ALIAS, SYNTAX.
   Not wired into `log_attempt`; the caller runs it on the pasted code.
 * `coach.rules`: the pure functions (`backlog`, `streak`, `tier_progress`, `retry_due`,
   `refire_due`, `blocklist`, `outcome`, `report_card`, ...), taking rows + `today`.
 * `coach.picker.pick_next(session, user_id, today)` is the lower level; prefer `next_problem`.
 
-## MCP bridge tools (`bridge/server.py`)
+## Coach tools (`coach/tools.py`, served by `/mcp`, `/tools` and `bridge/server.py`)
+
+One registry: each tool is `fn(ctx, **args) -> dict`, `ctx.user_id` from the Bearer coach
+token (`coach/tokens.py`, `coach_tokens` table, sha256 only) or COACH_USER for the local
+bridge. No tool takes a user id. Transports: `coach/web/remote.py` (`/mcp` Streamable HTTP,
+`GET /tools`, `POST /tools/<name>`: 401 auth, 404 unknown, 422 bad args, tool {error} = 200,
+`wait_for_event` capped at 55 s per REST call) and `bridge/server.py` (stdio: direct DB, or
+`--remote URL --token T` forwarding to `/tools`). Tokens: `/connect` page,
+`python -m coach.cli coach-token NAME [--label L] [--revoke ID] [--list]`.
 
 Choosing: `get_profile()`, `get_due()`, `find_problems(pattern, tier, untouched, difficulty,
 limit)` -> {candidates}, `hand_out(number, target_min=None, mode="coached", why="")` ->
@@ -312,7 +333,7 @@ inside it), and a `visual` event makes `solve.js` swap cleared bubbles. `static/
 `Last-Event-ID` header, else "from now". First event `hello` {open_handout_id, editor_open,
 started_at, online, last_message_id} (id = the cursor), then one event per ui_events row
 (`id: <row id>`, `event: <kind>`, `data: {"ref_id": ..}`), `presence` {"online"} only when
-coach_online() flips (re-checked every 2 s too, so going offline shows), `: ping` every 15 s.
+coach_online(user) flips (re-checked every 2 s too, so going offline shows), `: ping` every 15 s.
 The DB is read every 250 ms. `max_events` / `max_s` stop the stream early (tests only).
 
 `GET /handout/state` (login) -> {open_handout_id, editor_open, started_at, target_min,

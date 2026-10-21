@@ -8,6 +8,9 @@
     python -m coach.cli log --handout 12 --min 14 --bugs 0 [--hints 1] [--no-optimal]
                             [--no-cold] [--abandoned] [--notes TEXT]
     python -m coach.cli reveal HANDOUT_ID
+    python -m coach.cli coach-token NAME [--label L]   # prints a new coach token ONCE
+    python -m coach.cli coach-token NAME --revoke ID
+    python -m coach.cli coach-token NAME --list
 
 DB path: env COACH_DB, default ./coach.db. The user is the first (only) user.
 RULE ZERO: `next` prints the Handoff fields and nothing else. `status` is progress talk; never
@@ -98,6 +101,11 @@ def main(argv=None):
     p.add_argument("handout_id", type=int)
     p = sub.add_parser("ext-token", help="print the browser-extension token")
     p.add_argument("--rotate", action="store_true")
+    p = sub.add_parser("coach-token", help="coach tokens for /mcp and /tools")
+    p.add_argument("name")
+    p.add_argument("--label", default="cli")
+    p.add_argument("--revoke", type=int, metavar="ID")
+    p.add_argument("--list", action="store_true")
     args = ap.parse_args(argv)
 
     db.init()
@@ -144,6 +152,27 @@ def main(argv=None):
     elif args.cmd == "ext-token":
         from . import ext
         print(ext.ext_token_rotate() if args.rotate else ext.ext_token_get_or_create())
+    elif args.cmd == "coach-token":
+        from . import tokens
+        uid = tokens.user_id_by_name(args.name)
+        if uid is None:
+            sys.exit(f"no user {args.name!r}")
+        if args.revoke is not None:
+            try:
+                live = tokens.revoke(uid, args.revoke)
+            except ValueError as e:
+                sys.exit(str(e))
+            print(f"token {args.revoke} " + ("revoked" if live else "was already revoked"))
+        elif args.list:
+            for t in tokens.list_for(uid):
+                state = "revoked" if t["revoked_at"] else "live"
+                print(f"{t['id']:>4}  {state:<8} {t['label']:<24} created {t['created_at']:%Y-%m-%d %H:%M}"
+                      f"  last used {t['last_used_at'] or 'never'}")
+        else:
+            t = tokens.create(uid, args.label)
+            print(t["token"])
+            print(f"(token id {t['id']}, label {t['label']!r}; shown once, stored hashed)",
+                  file=sys.stderr)
     elif args.cmd == "reveal":
         print(json.dumps(service.reveal(args.handout_id), indent=2))
 

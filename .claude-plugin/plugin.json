@@ -1,21 +1,32 @@
 {
   "name": "leetcode-coach",
   "displayName": "LeetCode Coach",
-  "version": "0.1.0",
-  "description": "Daily interview-prep coaching session: /coach skill plus the MCP bridge to the coach website.",
+  "version": "0.2.0",
+  "description": "Daily interview-prep coaching session: the /coach skill plus the coach website's tools over remote MCP.",
   "author": { "name": "virtual457" },
   "license": "UNLICENSED",
   "keywords": ["leetcode", "coaching", "interview-prep"],
   "skills": ["./bridge/skills/"],
+  "userConfig": {
+    "coach_url": {
+      "type": "string",
+      "title": "Coach site URL",
+      "description": "Base URL of the coach website, no trailing slash (e.g. https://coach.example.com).",
+      "default": "http://127.0.0.1:8731"
+    },
+    "coach_token": {
+      "type": "string",
+      "title": "Coach token",
+      "description": "Your token from the site's Connect coach page (/connect).",
+      "sensitive": true,
+      "required": true
+    }
+  },
   "mcpServers": {
     "coach": {
-      "type": "stdio",
-      "command": "${CLAUDE_PLUGIN_ROOT}/.venv/Scripts/python.exe",
-      "args": ["-m", "bridge.server"],
-      "env": {
-        "PYTHONPATH": "${CLAUDE_PLUGIN_ROOT}",
-        "COACH_DB": "${CLAUDE_PLUGIN_ROOT}/coach.db"
-      },
+      "type": "http",
+      "url": "${user_config.coach_url}/mcp",
+      "headers": { "Authorization": "Bearer ${user_config.coach_token}" },
       "timeout": 1800000,
       "alwaysLoad": true
     }

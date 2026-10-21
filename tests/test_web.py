@@ -233,7 +233,8 @@ def test_help_connect(env):
     assert c.get("/help/connect").headers["location"] == "/login"
     login(c)
     r = c.get("/help/connect")
-    assert r.status_code == 200 and "plugin install" in r.text and "start.ps1" in r.text
+    assert r.status_code == 200 and "claude mcp add --transport http coach" in r.text
+    assert "/mcp" in r.text and 'href="/connect"' in r.text
     assert_clean(r.text)
 
 

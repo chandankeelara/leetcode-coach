@@ -1136,3 +1136,12 @@ body.app-solve .toasts { right: auto; left: var(--s4); bottom: var(--s4); }
 @keyframes wait-pulse { 0%, 100% { opacity: .35; transform: scale(.85); } 50% { opacity: 1; transform: scale(1); } }
 @media (prefers-reduced-motion: reduce) { .wait-pulse { animation: none; } }
 @media (max-width: 640px) { .plan-date, .plan-num { width: 100%; } }
+
+/* /connect */
+.connect .token-new { border: 1px solid var(--line); border-radius: 8px; padding: 12px 16px; margin: 16px 0; }
+.connect .token-new pre { user-select: all; }
+.connect form.grp { display: flex; gap: 8px; align-items: end; flex-wrap: wrap; }
+.connect table.tokens { width: 100%; border-collapse: collapse; margin-top: 12px; }
+.connect table.tokens th, .connect table.tokens td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+.connect table.tokens tr.muted td { opacity: .55; }
+.connect pre code { white-space: pre-wrap; word-break: break-all; }

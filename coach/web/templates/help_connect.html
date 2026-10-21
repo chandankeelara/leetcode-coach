@@ -3,25 +3,29 @@
 {% block body %}
 <section class="help">
   <h1>Connect your coach</h1>
-  <p>The coach is Claude Code running on this machine. This site is where you work; Claude Code answers in the chat.</p>
+  <p>The coach is Claude Code on your own computer. This site keeps your data and serves the coach's tools, so you install nothing but Claude Code.</p>
 
-  <h2>Install once</h2>
-  <p>In any shell:</p>
-  <pre><code>claude plugin marketplace add D:/Git/virtual457-projects/leetcode-coach
-claude plugin install leetcode-coach@leetcode-coach-local</code></pre>
-  <p>The skill is then <code>/leetcode-coach:coach</code>. Install it once only, or you get two coach servers.</p>
+  <h2>Set up once</h2>
+  <ol>
+    <li>Open <a href="/connect">Connect coach</a> and press <strong>New token</strong>. Copy it: it is shown once.</li>
+    <li>In any shell run the command that page shows:
+      <pre><code>claude mcp add --transport http coach {{ site }}/mcp --header "Authorization: Bearer &lt;your token&gt;"</code></pre></li>
+    <li><code>claude mcp list</code> should show <code>coach</code> as connected.</li>
+  </ol>
+  <p>Network blocks MCP? The <a href="/connect">Connect coach</a> page also shows the local bridge command, which uses plain HTTPS.</p>
+  <p>Lost a laptop? Revoke its token on the same page. The coach on it stops working at once.</p>
 
   <h2>How a day runs</h2>
   <ol>
-    <li>Run <code>start.ps1</code> in the repo to start this site. Open it and log in.</li>
-    <li>Open Claude Code (desktop app or <code>claude</code>) in any folder. Type <code>/leetcode-coach:coach</code>.</li>
+    <li>Open this site and log in.</li>
+    <li>Open Claude Code (desktop app or <code>claude</code>) in any folder. Type <code>/coach</code>.</li>
     <li>Come back here. Say "next" when the dot turns green.</li>
     <li>Work in the browser: approach, code, chat. Claude Code replies in the chat panel and waits again.</li>
     <li>Say you are done. The coach stops.</li>
   </ol>
 
   <h2>Check the dot</h2>
-  <p>The dot in the discussion header is green and says Live when Claude Code is waiting for you. If it says Offline, or the banner shows, the coach is not connected: open Claude Code and type the command again. It can take a few seconds to turn green.</p>
+  <p>The dot in the discussion header is green and says Live when your Claude Code is waiting for you. If it says Offline, or the banner shows, your coach is not connected: open Claude Code and type the command again. It can take a few seconds to turn green.</p>
   <p><a href="/">Back</a></p>
 </section>
 {% endblock %}

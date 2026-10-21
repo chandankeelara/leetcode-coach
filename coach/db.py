@@ -40,6 +40,7 @@ def init(path=None):
 
     Base.metadata.create_all(_engine)
     add_missing_columns(_engine)
+    add_attempt_handout_index(_engine)
     _maker = sessionmaker(_engine, expire_on_commit=False, future=True)
     # Data migration: users with history from before plans get PLAN.md as their plan.
     from . import plans
@@ -67,6 +68,23 @@ def add_missing_columns(engine):
                 conn.execute(text(f'ALTER TABLE "{table.name}" ADD COLUMN "{col.name}" {ddl}'))
                 added.append(f"{table.name}.{col.name}")
     return added
+
+
+def add_attempt_handout_index(engine):
+    """Partial unique index attempts(handout_id) WHERE handout_id IS NOT NULL, for a database
+    created before it existed. If duplicates are already there the index is skipped (logged) and
+    service.log_attempt still refuses a second log in code. Returns True when the index exists."""
+    import sys
+    try:
+        with engine.begin() as conn:
+            conn.execute(text('CREATE UNIQUE INDEX IF NOT EXISTS uq_attempts_handout '
+                              'ON attempts (handout_id) WHERE handout_id IS NOT NULL'))
+        return True
+    except Exception as e:                      # duplicates in live data: enforce in code only
+        print(f"[coach.db] uq_attempts_handout not created ({type(e).__name__}); "
+              "duplicate attempts per handout exist, log_attempt still refuses new ones",
+              file=sys.stderr)
+        return False
 
 
 def get_engine():

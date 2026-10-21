@@ -64,7 +64,7 @@ class FakeService:
 
     def burn_pattern(self, uid, slug, reason): pass
 
-    def coach_online(self):
+    def coach_online(self, uid=None):
         return {"online": self.online, "last_seen": None, "reason": "fake"}
 
     def push_event(self, uid, kind, payload):
