@@ -294,3 +294,50 @@ def test_unlock_lock_editor_round_trip(real):
 
 def test_unlock_editor_without_open_problem(real):
     assert server.unlock_editor() == {"error": "no open problem"}
+
+
+# ---- coach-led choice ------------------------------------------------------------------------
+def _bank(n=4):
+    from coach.db import session_scope
+    from coach.models import Pattern, Problem
+    with session_scope() as s:
+        s.add(Pattern(slug="sliding-window", name="Sliding Window", tier=1))
+        s.add(Pattern(slug="heap", name="Heap", tier=1))
+        s.flush()
+        for i in range(n):
+            s.add(Problem(number=500 + i, title=f"Problem {500 + i}", lc_slug=f"p-{i}",
+                          difficulty="EM"[i % 2], source="bank", bank_order=i,
+                          pattern_slug="sliding-window" if i < 2 else "heap"))
+
+
+def test_coach_pick_tools_registered_and_clean():
+    tools = {t.name: t for t in asyncio.run(server.mcp.list_tools())}
+    assert {"get_profile", "get_due", "find_problems", "hand_out", "skip_problem"} <= set(tools)
+    assert "FALLBACK" in tools["next_problem"].description
+
+
+def test_hand_out_tool_real_db(real):
+    service, uid = real
+    _bank()
+    assert server.get_profile()["plan"] is None
+    assert server.get_due()["retry_due"] == []
+    cands = server.find_problems(pattern="heap")["candidates"]
+    assert [c["number"] for c in cands] == [502, 503]
+    h = server.hand_out(500, target_min=11, mode="timed", why="untouched focus area")
+    assert set(h) == HANDOFF_KEYS and h["mode"] == "timed" and h["target_min"] == 11
+    msgs = [m["content"] for m in service.list_messages(uid)]
+    assert msgs[0].startswith("500. Problem 500") and msgs[1] == server.STATEMENT_COMING
+    assert "untouched" not in " ".join(msgs)
+    r = server.hand_out(502)
+    assert "still open" in r["error"]
+    # RULE ZERO guard on say: refused, nothing posted, clock untouched
+    n = len(service.list_messages(uid))
+    r = server.say("Keep a window of k.", clock_action="pause", clock_reason="x")
+    assert r == {"error": "leak: names the open problem's pattern", "posted": False}
+    assert len(service.list_messages(uid)) == n
+    assert service.clock_state(uid, h["handout_id"])["state"] == "running"
+    assert "message_id" in server.say("Would a heap help?")      # a different one is allowed
+    assert server.skip_problem()["ok"] is True
+    assert set(server.hand_out(502)) == HANDOFF_KEYS
+    assert "last 7 days" in server.find_problems(pattern="sliding-window")["candidates"][-1][
+        "block_reason"]

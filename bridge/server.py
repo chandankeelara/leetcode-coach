@@ -10,10 +10,16 @@ pushes one (approach / submission / stuck / skip / chat / timer_over) or the tim
 The server adds `clock_checkpoint` {pct, elapsed_min, target_min, has_approach} when the
 coach's clock crosses 50 / 100 / 150 % of target.
 
+Problem choice is the coach's: `get_profile` / `get_due` / `find_problems` to read, then
+`hand_out(number, ...)`, which the server validates (7-day block, retired, Hards by the plan,
+burned pattern, one open handout). `next_problem` is the FALLBACK picker only.
+
 RULE ZERO lives here structurally:
-  - `next_problem` returns the Handoff fields and nothing else (extra keys are stripped and
-    logged), and it posts the handoff to the chat panel itself, so the message that hands out
-    a problem is built by code, never by the model.
+  - `hand_out` and `next_problem` return the Handoff fields and nothing else (extra keys are
+    stripped and logged), and post the handoff to the chat panel themselves, so the message
+    that hands out a problem is built by code, never by the model.
+  - every coach text (`say`, statements, drawings, boxes, test labels) is refused while it
+    names the open problem's pattern before he has named it.
   - tool descriptions name no patterns, slots, tiers or difficulties.
 """
 import asyncio
@@ -164,17 +170,8 @@ def _days_missed(today_iso):
     return _jsonable(rules.missed_days(days, today))
 
 
-@mcp.tool()
-def next_problem(new: bool = False) -> dict:
-    """Hand out the next problem. Posts the handoff to the chat panel itself and returns the
-    same fields. Returns the still-open one unless new=true. Say nothing else alongside it."""
+def _post_handoff(raw):
     s = svc()
-    try:
-        raw = s.next_problem(uid(), force_new=new)
-    except TypeError:                       # a service without force_new
-        raw = s.next_problem(uid())
-    if raw is None:
-        return {"handoff": None, "reason": "nothing eligible right now"}
     h = clean_handoff(raw)
     s.post_message(uid(), "coach", render_handoff(h), handout_id=h["handout_id"])
     if not h.get("paraphrase"):
@@ -183,13 +180,74 @@ def next_problem(new: bool = False) -> dict:
 
 
 @mcp.tool()
+def next_problem(new: bool = False) -> dict:
+    """FALLBACK only: the server's default pick. Normally you choose with get_profile, get_due, find_problems and hand_out. Posts the handoff to the chat panel itself and returns the same fields. Returns the still-open one unless new=true. Say nothing else alongside it."""
+    s = svc()
+    try:
+        raw = s.next_problem(uid(), force_new=new)
+    except TypeError:                       # a service without force_new
+        raw = s.next_problem(uid())
+    if raw is None:
+        return {"handoff": None, "reason": "nothing eligible right now"}
+    return _post_handoff(raw)
+
+
+@mcp.tool()
+def get_profile() -> dict:
+    """His plan (phase, focus, target date, when Hards open), skill ledger, per-pattern record (clean, attempts, owned, last attempt, retired), last 20 attempts, backlog, streak, clean rate. For choosing the next problem. Never quote it to him before a handoff."""
+    return _jsonable(svc().get_profile(uid()))
+
+
+@mcp.tool()
+def get_due() -> dict:
+    """What is owed now: retry items due (most overdue first), retired patterns due a re-fire, the 7-day blocklist, today's done and target count."""
+    return _jsonable(svc().get_due(uid()))
+
+
+@mcp.tool()
+def find_problems(pattern: str | None = None, tier: int | None = None,
+                  untouched: bool | None = None, difficulty: str | None = None,
+                  limit: int = 20) -> dict:
+    """Candidate problems in bank order, with his attempts, clean count and whether hand_out would refuse each one now (blocked, block_reason). Filters: pattern slug, tier, untouched (never attempted), level letter E/M/H."""
+    try:
+        rows = svc().find_problems(uid(), pattern=pattern, tier=tier, untouched=untouched,
+                                   difficulty=difficulty, limit=limit)
+    except ValueError as e:
+        return {"error": str(e)}
+    return {"candidates": _jsonable(rows)}
+
+
+@mcp.tool()
+def hand_out(number: int, target_min: int | None = None, mode: str = "coached",
+             why: str = "") -> dict:
+    """Hand out the problem YOU chose. The server checks the hard rules and refuses with {error} (touched in the last 7 days, retired, not allowed yet by the plan, burned this session, another problem open). why: one plain line, kept private until he logs. mode: timed | coached. target_min default: the server's. Posts the handoff to the chat panel itself and returns its fields. Say nothing else alongside it."""
+    try:
+        raw = svc().hand_out(uid(), number, target_min=target_min, mode=mode, why=why)
+    except ValueError as e:
+        return {"error": str(e)}
+    return _post_handoff(raw)
+
+
+@mcp.tool()
+def skip_problem() -> dict:
+    """Skip the open problem (after a leak, or when he skips). It still blocks for 7 days. Then hand out another."""
+    f = getattr(svc(), "skip_open", None)
+    if f is None:
+        return {"error": "not supported"}
+    try:
+        return _jsonable(f(uid()))
+    except ValueError as e:
+        return {"error": str(e)}
+
+
+@mcp.tool()
 def set_statement(handout_id: int, text: str) -> dict:
     """Write the problem statement, examples and constraints in your own words. Rejected if it names a technique or a difficulty. On success it is also posted to the chat panel."""
     try:
         svc().set_statement(uid(), handout_id, text)
+        svc().post_message(uid(), "coach", text.strip(), handout_id=handout_id)
     except ValueError as e:
         return {"error": str(e)}
-    svc().post_message(uid(), "coach", text.strip(), handout_id=handout_id)
     return {"ok": True}
 
 
@@ -312,12 +370,21 @@ def say(text: str, clock_action: str | None = None, clock_reason: str = "",
     (as in `clock`) is applied first, so "Clock stopped. <why>." and the pause are one call;
     if the clock change fails nothing is posted."""
     out = {}
+    check = getattr(svc(), "check_coach_text", None)
+    if check is not None:
+        try:
+            check(uid(), text)
+        except ValueError as e:
+            return {"error": str(e), "posted": False}
     if clock_action:
         c = _clock(clock_action, clock_reason, target_min, label)
         if "error" in c:
             return {"error": c["error"], "posted": False}
         out["clock"] = c
-    out["message_id"] = svc().post_message(uid(), "coach", text)
+    try:
+        out["message_id"] = svc().post_message(uid(), "coach", text)
+    except ValueError as e:
+        return {"error": str(e), "posted": False, **out}
     return out
 
 

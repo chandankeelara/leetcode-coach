@@ -22,6 +22,25 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 
+class Plan(Base):
+    """A learner's study plan: what the coach picks problems by. One active row per user
+    (older rows stay, active=False). phases: [{name, start, end, rules}] (iso dates)."""
+    __tablename__ = "plans"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    title: Mapped[str] = mapped_column(String(200), default="My plan")
+    target_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    daily_problems: Mapped[int] = mapped_column(Integer, default=2)
+    minutes_per_day: Mapped[int] = mapped_column(Integer, default=90)
+    focus_patterns: Mapped[list] = mapped_column(JSON, default=list)     # [slug, ...] in order
+    phases: Mapped[list] = mapped_column(JSON, default=list)
+    hards_from: Mapped[date | None] = mapped_column(Date, nullable=True)  # None = no Hards
+    notes: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
 class Pattern(Base):
     __tablename__ = "patterns"
     slug: Mapped[str] = mapped_column(String(64), primary_key=True)
@@ -75,6 +94,11 @@ class Handout(Base):
     first_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # never moves
     checkpoints_fired: Mapped[list | None] = mapped_column(JSON, nullable=True)   # [50, 100, ...]
     stub: Mapped[str | None] = mapped_column(Text, nullable=True)   # editor tools: starter code
+    # Coach picks (service.hand_out): the mode it chose and its private one-line reason.
+    # Both NULL on picker handouts (mode then follows the slot). pick_reason is shown only
+    # after the attempt is logged (reveal, session_summary).
+    mode: Mapped[str | None] = mapped_column(String(8), nullable=True)      # timed|coached
+    pick_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class Attempt(Base):

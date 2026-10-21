@@ -41,6 +41,10 @@ def init(path=None):
     Base.metadata.create_all(_engine)
     add_missing_columns(_engine)
     _maker = sessionmaker(_engine, expire_on_commit=False, future=True)
+    # Data migration: users with history from before plans get PLAN.md as their plan.
+    from . import plans
+    with session_scope() as s:
+        plans.migrate_legacy(s)
     return _engine
 
 

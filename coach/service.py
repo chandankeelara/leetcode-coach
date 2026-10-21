@@ -15,11 +15,11 @@ from argon2.exceptions import InvalidHashError, VerificationError
 from sqlalchemy import delete, select
 
 from . import clock as clk
-from . import picker, rules, state
+from . import picker, plans, rules, state
 from .catalog import default_target, pattern_name, pattern_tier
 from .db import session_scope
-from .models import (Attempt, Burned, ClockEvent, CoachMessage, Config, CoachSession, Event,
-                     Handout, Pattern,
+from .models import (Annotation, Attempt, Burned, ClockEvent, CoachMessage, CodeDraft, Config,
+                     CoachSession, Event, Handout, Pattern,
                      PatternState, Problem, RetryItem, Skill, SkillEvent, Submission, TrapRecall,
                      UiEvent, User, Visual)
 
@@ -144,7 +144,9 @@ def status(user_id, today=None):
         atts = state.user_attempts(s, user_id)
         handouts = state.user_handouts(s, user_id)
         problems = state.all_problems(s)
-        bl = rules.backlog(atts, today, cfg["backlog_start"], cfg["per_day"])
+        plan = plans.active_plan(s, user_id)
+        bl = rules.backlog(atts, today, cfg["backlog_start"],
+                           plan.daily_problems if plan else cfg["per_day"])
         bl.pop("per_day", None)
         retry = rules.retry_due(state.user_retry_items(s, user_id), today, cfg["ladder"])
         for r in retry:
@@ -289,6 +291,7 @@ def clock(user_id, handout_id, action, reason="", target_min=None, label=None, n
             bad = leak_words(text, s.get(Problem, h.problem_number).title, s)
             if bad:
                 raise ValueError("leak: " + ", ".join(bad))
+            rule_zero_check(s, user_id, text, h)
             h.phase_label = text or None
             value = {"label": text}
         s.add(ClockEvent(user_id=user_id, handout_id=h.id, action=action, at=now,
@@ -408,6 +411,131 @@ def leak_words(text, title, s):
     return sorted(set(hits))
 
 
+# ---- RULE ZERO guard on the OPEN problem's pattern -------------------------------------------
+# The coach now picks, so it knows the pattern before he does. Every coach-authored text is
+# checked against the open problem's pattern (name, slug, synonyms below) until the attempt is
+# logged, unless HE already named it (his chat, approach, code, replies for this handout).
+# A different pattern's name is not checked here: that is a hint toward a wrong one.
+RULE_ZERO_ERROR = "leak: names the open problem's pattern"
+_PATTERN_SYNONYMS = {
+    "prefix-hashmap": ["prefix sums?", "prefix", "hash ?maps?", "hash tables?", "running sums?",
+                       "cumulative sums?"],
+    "hashing": ["hash ?maps?", "hash ?sets?", "hash tables?", "hashing"],
+    "index-as-hash": ["index as hash", "negative marking"],
+    "two-pointers": ["two pointers?", "2 pointers?"],
+    "sliding-window": ["sliding windows?", "window"],
+    "trees-dfs": ["dfs", "depth first"],
+    "trees-bfs": ["bfs", "breadth first", "level order"],
+    "grid-bfs": ["bfs", "breadth first", "flood fill", "multi source"],
+    "graphs": ["dfs", "bfs", "depth first", "breadth first"],
+    "graph-shortest-path": ["dijkstra", "bellman ford", "shortest path", "bfs"],
+    "graph-toposort": ["topological", "topo ?sort", "kahn", "in ?degrees?"],
+    "binary-search-array": ["binary search", "bisect"],
+    "binary-search-answer": ["binary search", "bisect", "search on the answer"],
+    "linked-list": ["linked lists?"],
+    "heap": ["heaps?", "priority queues?", "heapq"],
+    "intervals": ["sweep line", "merge intervals"],
+    "monotonic-stack": ["monotonic", "stack"],
+    "monotonic-deque": ["monotonic", "deque"],
+    "stack": ["stack"],
+    "backtracking": ["backtrack(?:ing|s)?"],
+    "dp-1d": ["dp", "dynamic programming", "memo(?:ization|ize|ised|ized)?", "tabulation"],
+    "dp-2d": ["dp", "dynamic programming", "memo(?:ization|ize|ised|ized)?", "tabulation"],
+    "union-find": ["union find", "dsu", "disjoint sets?"],
+    "trie": ["tries?", "prefix trees?"],
+    "greedy": ["greedy"],
+    "bit-manipulation": ["bit manipulation", "xor", "bit ?masks?"],
+}
+# Pattern names that are ordinary words in statements: only their synonyms are checked.
+_DOMAIN_NAMES = {"intervals", "matrix", "graphs"}
+
+
+def _pattern_terms(slug, s):
+    """[compiled regex] for one pattern: its slug, its name, its synonyms."""
+    if not slug:
+        return []
+    out = []
+    names = {slug}
+    row = s.get(Pattern, slug)
+    if row is not None:
+        names.add(row.name)
+    for n in names:
+        key = re.sub(r"[\s\-_]+", " ", n.lower()).strip()
+        if key and key not in _DOMAIN_NAMES:
+            out.append(_term_regex(key))
+    for syn in _PATTERN_SYNONYMS.get(slug, []):
+        out.append(_term_regex(syn, True))
+    return out
+
+
+def _his_text(s, h):
+    """Everything HE wrote for this handout: chat/approach messages, approach/chat/submission
+    events, his code draft, his replies to annotation boxes."""
+    start = min(x for x in (h.first_started_at, h.handed_at) if x is not None) \
+        - timedelta(seconds=2)
+    bits = []
+    for m in s.scalars(select(CoachMessage).where(
+            CoachMessage.user_id == h.user_id, CoachMessage.role == "user",
+            CoachMessage.created_at >= start)):
+        if m.handout_id in (None, h.id):
+            bits.append(m.content or "")
+    for e in s.scalars(select(Event).where(
+            Event.user_id == h.user_id, Event.created_at >= start,
+            Event.kind.in_(("approach", "chat", "submission", "annotation_reply")))):
+        p = e.payload or {}
+        if p.get("handout_id") == h.id:
+            bits += [str(p.get(k) or "") for k in ("text", "code", "reply")]
+    d = s.scalars(select(CodeDraft).where(CodeDraft.handout_id == h.id)).first()
+    if d is not None and d.code:
+        bits.append(d.code)
+    for a in s.scalars(select(Annotation).where(Annotation.handout_id == h.id)):
+        if a.reply:
+            bits.append(a.reply)
+    return "\n".join(bits)
+
+
+def _split_ident(text):
+    return re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", text or "")
+
+
+def rule_zero_leak(s, h, text):
+    """The open-pattern terms in `text` that he has not named himself (and the title does not
+    contain), or []. Only while h is open; after logging the post-mortem may name it."""
+    if h is None or h.status != "open" or not (text or "").strip():
+        return []
+    p = s.get(Problem, h.problem_number)
+    slug = h.pattern_slug or (p.pattern_slug if p else None)
+    terms = _pattern_terms(slug, s)
+    if not terms:
+        return []
+    low = _split_ident(text).lower()
+    title = (p.title if p else "").lower()
+    hits = [rx for rx in terms if rx.search(low) and not rx.search(title)]
+    if not hits:
+        return []
+    his = _split_ident(_his_text(s, h)).lower()
+    if any(rx.search(his) for rx in hits):
+        return []                      # he named it first: talking about it is fine now
+    return sorted({rx.search(low).group(0).strip() for rx in hits})
+
+
+def rule_zero_check(s, user_id, text, h=None):
+    """Raise ValueError(RULE_ZERO_ERROR) if coach text names the OPEN problem's pattern before
+    he did. h = the handout the text belongs to (default: his latest open one)."""
+    if h is None:
+        h = s.scalars(select(Handout).where(
+            Handout.user_id == user_id, Handout.status == "open",
+            Handout.slot != "imported").order_by(Handout.id.desc())).first()
+    if rule_zero_leak(s, h, text):
+        raise ValueError(RULE_ZERO_ERROR)
+
+
+def check_coach_text(user_id, text):
+    """Bridge pre-check for `say`: ValueError(RULE_ZERO_ERROR) if it would be refused."""
+    with session_scope() as s:
+        rule_zero_check(s, user_id, text)
+
+
 def set_statement(user_id, handout_id, text):
     """Store the coach-written statement on the handout's problem (overwrites). Raises
     ValueError('leak: ...') naming the offending words and stores nothing when the text names a
@@ -432,6 +560,7 @@ def set_statement(user_id, handout_id, text):
         bad = leak_words(" . ".join([prose] + spec_texts), p.title, s)
         if bad:
             raise ValueError("leak: " + ", ".join(bad))
+        rule_zero_check(s, user_id, " . ".join([prose] + spec_texts), h)
         p.paraphrase = text
         emit(user_id, "statement", h.id, s)
         return {"ok": True, "handout_id": h.id, "number": p.number}
@@ -473,6 +602,7 @@ def show_visual(user_id, handout_id, kind, spec):
         bad = leak_words("\n".join(viz.texts(kind, spec)), title, s)
         if bad:
             raise ValueError("leak: " + ", ".join(bad))
+        rule_zero_check(s, user_id, "\n".join(viz.texts(kind, spec)), h)
         html_out = viz.render(kind, spec)
         cap = viz.caption(spec)
         label = cap or viz.KIND_LABEL[kind]
@@ -716,13 +846,19 @@ def reveal(handout_id):
         p = s.get(Problem, h.problem_number)
         slug = h.pattern_slug or p.pattern_slug
         out = {"handout_id": h.id, "number": p.number, "title": p.title, "slot": h.slot,
-               "mode": picker.mode_for(h.slot),
+               "mode": picker.handout_mode(h), "picked_by": _picked_by(h),
+               "why": h.pick_reason,
                "pattern": slug, "pattern_name": pattern_name(slug) if slug else None,
                "tier": pattern_tier(slug) if slug else None}
         if h.slot == "refire" and slug:
             out["trap_quiz"] = trap_quiz(h.user_id, slug, s)
         out["clock"] = clock_record(s, h)
         return out
+
+
+def _picked_by(h):
+    """coach = service.hand_out; server = the fallback picker (next_problem / default pick)."""
+    return "coach" if (h.pick_reason is not None or h.mode is not None) else "server"
 
 
 def burn_pattern(user_id, slug, reason="", today=None):
@@ -746,6 +882,20 @@ def push_event(user_id, kind, payload=None):
                 and getattr(s.get(Handout, p["handout_id"]), "user_id", None) == user_id):
             s.add(Submission(user_id=user_id, handout_id=p["handout_id"], code=p["code"]))
         s.flush()
+        return e.id
+
+
+def request_next(user_id, source="web"):
+    """He pressed Next problem: queue ONE `next_requested` event for the coach (an unconsumed
+    one is reused). The coach answers with hand_out. Returns the event id."""
+    with session_scope() as s:
+        e = s.scalars(select(Event).where(
+            Event.user_id == user_id, Event.kind == "next_requested",
+            Event.consumed.is_(False)).order_by(Event.id)).first()
+        if e is None:
+            e = Event(user_id=user_id, kind="next_requested", payload={"source": source})
+            s.add(e)
+            s.flush()
         return e.id
 
 
@@ -837,8 +987,14 @@ async def wait_event(user_id, timeout_s=25.0, poll_s=0.25):
 
 
 def post_message(user_id, role, content, handout_id=None):
-    """Chat panel message. role: user | coach | system. Returns the message id."""
+    """Chat panel message. role: user | coach | system. Returns the message id.
+    role coach: RULE ZERO guard (rule_zero_check) on the open problem: ValueError(
+    "leak: names the open problem's pattern") and nothing stored."""
     with session_scope() as s:
+        if role == "coach":
+            hh = s.get(Handout, handout_id) if handout_id is not None else None
+            rule_zero_check(s, user_id, content,
+                            hh if hh is not None and hh.user_id == user_id else None)
         m = CoachMessage(user_id=user_id, handout_id=handout_id, role=role, content=content)
         s.add(m)
         s.flush()
@@ -1011,7 +1167,8 @@ def session_summary(user_id, today=None):
             rv = None
             if h.status == "logged":
                 slug = h.pattern_slug or p.pattern_slug
-                rv = {"slot": h.slot, "pattern": slug,
+                rv = {"slot": h.slot, "pattern": slug, "picked_by": _picked_by(h),
+                      "why": h.pick_reason,
                       "pattern_name": pattern_name(slug) if slug else None,
                       "tier": pattern_tier(slug) if slug else None}
             subs = list(s.scalars(select(Submission).where(Submission.handout_id == h.id)
@@ -1023,7 +1180,7 @@ def session_summary(user_id, today=None):
                                 "verdicts": [x.verdict for x in subs]},
                 "handout_id": h.id, "number": p.number, "title": p.title,
                 "handed_at": h.handed_at.isoformat(), "target_min": h.target_min,
-                "status": h.status, "mode": picker.mode_for(h.slot),
+                "status": h.status, "mode": picker.handout_mode(h),
                 "attempt": _attempt_row(a) if a else None, "reveal": rv,
                 "clock": clock_record(s, h)})
         linked = {h.id for h in handouts}
@@ -1066,3 +1223,9 @@ from .tests_api import (TESTS_UI_KINDS, add_user_test, delete_user_test, judge, 
                         last_run, run_tests, set_tests, tests)
 
 UI_KINDS = UI_KINDS | TESTS_UI_KINDS        # emit() reads the module global at call time
+
+
+# ---- plans and coach-led problem choice (coach/plans.py, coach/picks.py) --------------------
+from .plans import get_plan, pattern_choices, set_plan  # noqa: E402
+from .picks import (PickRefused, find_problems, get_due, get_profile, hand_out,  # noqa: E402
+                    skip_open)

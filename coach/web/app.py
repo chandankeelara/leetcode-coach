@@ -207,7 +207,7 @@ def render(request, name, sess=None, **ctx):
     ctx.setdefault("csrf", sess["csrf"] if sess else "")
     ctx.setdefault("authed", sess is not None)
     ctx.setdefault("nav", "neutral")
-    if name in ("solve.html", "interstitial.html"):
+    if name in ("solve.html", "interstitial.html", "waiting.html"):
         ctx.setdefault("coach_online", bool(service().coach_online()["online"]))
     return templates.TemplateResponse(request, name, ctx)
 
@@ -281,11 +281,19 @@ async def logout(request: Request):
 
 
 # ---- interstitial and solve ----------------------------------------------------------------
+def needs_plan(uid):
+    """A brand-new user has no plan yet: onboarding first. Services without plans never do."""
+    f = getattr(service(), "get_plan", None)
+    return f is not None and f(uid) is None
+
+
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     sess = require(request)
     if service().current_handout(sess["uid"]):
         return go("/solve")
+    if needs_plan(sess["uid"]):
+        return go("/onboarding")
     return render(request, "interstitial.html", sess)
 
 
@@ -312,15 +320,42 @@ async def solve(request: Request):
 
 @app.post("/solve")
 async def solve_start(request: Request):
+    """Next problem. The coach picks, not the page: queue `next_requested` for the coach and
+    show the waiting page, which follows the coach's hand_out to /solve. Coach offline: the
+    waiting page shows the connect steps and the default pick instead."""
+    sess, _ = await authed_form(request)
+    uid = sess["uid"]
+    if service().current_handout(uid):
+        return go("/solve")
+    if needs_plan(uid):
+        return go("/onboarding")
+    if service().coach_online()["online"]:
+        service().request_next(uid)
+    return go("/next")
+
+
+@app.get("/next", response_class=HTMLResponse)
+async def next_wait(request: Request, none: int = 0):
+    sess = require(request)
+    if service().current_handout(sess["uid"]):
+        return go("/solve")
+    online = bool(service().coach_online()["online"]) and not none
+    return render(request, "waiting.html", sess, coach_online=online, none_left=bool(none))
+
+
+@app.post("/solve/default")
+async def solve_default(request: Request):
+    """The server's default pick (the old slot picker), for a student whose coach is offline."""
     sess, _ = await authed_form(request)
     if not service().current_handout(sess["uid"]):
         h = service().next_problem(sess["uid"])
+        if h is None:
+            return go("/next?none=1")
         # The coach only hears the queue: tell it a problem was handed out from the page, so it
         # writes the statement and sets the tests instead of waiting for him.
-        if h is not None:
-            service().push_event(sess["uid"], "handout", {
-                "handout_id": h.handout_id, "number": h.number, "title": h.title,
-                "paraphrase": h.paraphrase, "mode": getattr(h, "mode", None), "source": "web"})
+        service().push_event(sess["uid"], "handout", {
+            "handout_id": h.handout_id, "number": h.number, "title": h.title,
+            "paraphrase": h.paraphrase, "mode": getattr(h, "mode", None), "source": "web"})
     return go("/solve")
 
 
@@ -635,6 +670,8 @@ async def dashboard(request: Request):
     blocked = blocked_while_open(sess)
     if blocked:
         return blocked
+    if needs_plan(sess["uid"]):
+        return go("/onboarding")
     st = service().status(sess["uid"])
     rep = service().report(sess["uid"], REPORT_DATE)
     rows = history_rows(sess["uid"])
@@ -660,6 +697,118 @@ async def history(request: Request, pattern: str = "", outcome: str = ""):
     return render(request, "history.html", sess, nav="full", active="history", rows=shown,
                   total=len(rows), patterns=patterns, pattern=pattern, outcome=outcome,
                   totals=totals)
+
+
+# ---- plan and onboarding (progress-side pages: blocked while a problem is open) -------------
+def _pattern_groups():
+    pts = service().pattern_choices()
+    labels = {1: "Core", 2: "Next", 3: "More"}
+    return [{"label": labels[t], "patterns": [p for p in pts if p["tier"] == t]}
+            for t in (1, 2, 3) if any(p["tier"] == t for p in pts)]
+
+
+def _hards_mode(plan):
+    if not plan or not plan.get("hards_from"):
+        return "never"
+    return "now" if plan["hards_from"] <= (plan.get("created_at") or "")[:10] else "date"
+
+
+def _plan_fields(form, full):
+    """Form -> set_plan fields. ValueError with a plain message on bad input."""
+    out = {"target_date": form.get("target_date") or None,
+           "daily_problems": form.get("daily_problems") or 2,
+           "minutes_per_day": form.get("minutes_per_day") or 90,
+           "focus_patterns": form.getlist("focus")}
+    mode = form.get("hards") or "never"
+    if mode == "now":
+        out["hards_from"] = date.today()
+    elif mode == "date":
+        if not form.get("hards_from"):
+            raise ValueError("Pick the date Hards start, or choose another option.")
+        out["hards_from"] = form.get("hards_from")
+    else:
+        out["hards_from"] = None
+    if not out["target_date"]:
+        raise ValueError("Pick a target date.")
+    if full:
+        out["title"] = form.get("title") or ""
+        out["notes"] = form.get("notes") or ""
+        phases = []
+        for n, line in enumerate((form.get("phases") or "").splitlines(), 1):
+            if not line.strip():
+                continue
+            bits = [b.strip() for b in line.split("|", 3)]
+            if len(bits) < 3:
+                raise ValueError(f"Phase line {n}: name | start | end | rules.")
+            bits += [""] * (4 - len(bits))
+            phases.append({"name": bits[0], "start": bits[1] or None, "end": bits[2] or None,
+                           "rules": bits[3]})
+        out["phases"] = phases
+    return out
+
+
+def _plan_page(request, sess, onboarding, plan=None, error=None, saved=False):
+    return render(request, "plan.html", sess, nav="neutral" if onboarding else "full",
+                  onboarding=onboarding, plan=plan, error=error, saved=saved,
+                  pattern_groups=_pattern_groups(), hards_mode=_hards_mode(plan))
+
+
+@app.get("/onboarding", response_class=HTMLResponse)
+async def onboarding(request: Request):
+    sess = require(request)
+    blocked = blocked_while_open(sess)
+    if blocked:
+        return blocked
+    if not needs_plan(sess["uid"]):
+        return go("/plan")
+    return _plan_page(request, sess, True)
+
+
+@app.post("/onboarding")
+async def onboarding_post(request: Request):
+    sess, form = await authed_form(request)
+    blocked = blocked_while_open(sess)
+    if blocked:
+        return blocked
+    try:
+        service().set_plan(sess["uid"], **_plan_fields(form, full=False))
+    except ValueError as e:
+        return _plan_page(request, sess, True, plan=_echo(form), error=str(e))
+    return go("/")
+
+
+def _echo(form):
+    return {"target_date": form.get("target_date"), "daily_problems": form.get("daily_problems"),
+            "minutes_per_day": form.get("minutes_per_day"),
+            "focus_patterns": form.getlist("focus"), "hards_from": form.get("hards_from"),
+            "title": form.get("title"), "notes": form.get("notes")}
+
+
+@app.get("/plan", response_class=HTMLResponse)
+async def plan_page(request: Request, saved: int = 0):
+    sess = require(request)
+    blocked = blocked_while_open(sess)
+    if blocked:
+        return blocked
+    plan = service().get_plan(sess["uid"])
+    if plan is None:
+        return go("/onboarding")
+    return _plan_page(request, sess, False, plan=plan, saved=bool(saved))
+
+
+@app.post("/plan")
+async def plan_post(request: Request):
+    sess, form = await authed_form(request)
+    blocked = blocked_while_open(sess)
+    if blocked:
+        return blocked
+    try:
+        service().set_plan(sess["uid"], **_plan_fields(form, full=True))
+    except ValueError as e:
+        plan = dict(service().get_plan(sess["uid"]) or {}, **{k: v for k, v in _echo(form).items()
+                                                            if v is not None})
+        return _plan_page(request, sess, False, plan=plan, error=str(e))
+    return go("/plan?saved=1")
 
 
 @app.middleware("http")

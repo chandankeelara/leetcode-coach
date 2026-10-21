@@ -110,6 +110,9 @@ def main(argv=None):
     elif args.cmd == "migrate":
         from migrate.import_old_repo import DEFAULT_OLD, import_old_repo
         rep = import_old_repo(args.repo or DEFAULT_OLD, args.user, args.force)
+        from . import plans
+        with db.session_scope() as s:
+            rep["plans_created"] = plans.migrate_legacy(s)
         for k, v in rep.items():
             print(f"  {k}: {len(v) if isinstance(v, list) else v}")
     elif args.cmd == "verify":

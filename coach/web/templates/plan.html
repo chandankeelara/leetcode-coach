@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block title %}{{ "Set up your plan" if onboarding else "Plan" }} · Coach{% endblock %}
+{% block body %}
+{% set p = plan or {} %}
+<div class="page page-narrow">
+  <div class="page-head">
+    <div>
+      <h1>{{ "Set up your plan" if onboarding else "Your plan" }}</h1>
+      <p class="sub">{% if onboarding %}Your coach picks every problem from this plan and your record. You can change it later from the dashboard.{% else %}Your coach picks problems by this plan.{% endif %}</p>
+    </div>
+    {% if not onboarding %}<a class="btn btn-quiet btn-sm" href="/dashboard">Back to the dashboard</a>{% endif %}
+  </div>
+
+  {% if error %}
+  <div class="alert plan-alert" role="alert">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16.5v.5"/></svg>
+    <span>{{ error }}</span>
+  </div>
+  {% endif %}
+  {% if saved %}<p class="sr-only" data-flash data-variant="ok">Plan saved.</p>{% endif %}
+
+  <form method="post" action="{{ '/onboarding' if onboarding else '/plan' }}" id="plan-form">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <div class="card log-card">
+      {% if not onboarding %}
+      <div class="log-row stack">
+        <label class="label" for="f-title">Title</label>
+        <input class="input" id="f-title" name="title" maxlength="200" value="{{ p.title or '' }}">
+      </div>
+      {% endif %}
+      <div class="log-row">
+        <div>
+          <label class="label" for="f-target">Target date</label>
+          <p class="hint">When the interviews start, or the date you want to be ready by.</p>
+        </div>
+        <input class="input plan-date" id="f-target" name="target_date" type="date" required value="{{ p.target_date or '' }}">
+      </div>
+      <div class="log-row">
+        <div>
+          <label class="label" for="f-daily">Problems a day</label>
+          <p class="hint">Missed days carry over in full.</p>
+        </div>
+        <input class="input plan-num" id="f-daily" name="daily_problems" type="number" inputmode="numeric" min="1" max="20" required value="{{ p.daily_problems or 2 }}">
+      </div>
+      <div class="log-row">
+        <div>
+          <label class="label" for="f-min">Minutes a day</label>
+          <p class="hint">Solving plus review.</p>
+        </div>
+        <input class="input plan-num" id="f-min" name="minutes_per_day" type="number" inputmode="numeric" min="10" max="600" required value="{{ p.minutes_per_day or 90 }}">
+      </div>
+      <div class="log-row stack">
+        <div>
+          <span class="label" id="l-focus">Focus areas</span>
+          <p class="hint">What you want covered. Leave all off to let your coach decide.</p>
+        </div>
+        {% set focus = p.focus_patterns or [] %}
+        {% for group in pattern_groups %}
+        <div class="plan-group" role="group" aria-labelledby="l-focus">
+          <span class="eyebrow">{{ group.label }}</span>
+          <div class="chips">
+            {% for pt in group.patterns %}
+            <label class="chip plan-chip"><input type="checkbox" name="focus" value="{{ pt.slug }}" {% if pt.slug in focus %}checked{% endif %}>{{ pt.name }}</label>
+            {% endfor %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      <div class="log-row stack">
+        <div>
+          <span class="label" id="l-hards">When to allow Hards</span>
+          <p class="hint">Hard problems are only handed out from this point.</p>
+        </div>
+        {% set hm = hards_mode %}
+        <div class="seg plan-seg" role="radiogroup" aria-labelledby="l-hards">
+          <input type="radio" id="h-now" name="hards" value="now" {% if hm == "now" %}checked{% endif %}><label for="h-now">From the start</label>
+          <input type="radio" id="h-date" name="hards" value="date" {% if hm == "date" %}checked{% endif %}><label for="h-date">From a date</label>
+          <input type="radio" id="h-never" name="hards" value="never" {% if hm == "never" %}checked{% endif %}><label for="h-never">Not yet</label>
+        </div>
+        <input class="input plan-date" id="f-hards" name="hards_from" type="date" aria-label="Allow Hards from" value="{{ p.hards_from or '' }}">
+      </div>
+      {% if not onboarding %}
+      <div class="log-row stack">
+        <div>
+          <label class="label" for="f-phases">Phases</label>
+          <p class="hint">One per line: name | start | end | rules. Dates as YYYY-MM-DD.</p>
+        </div>
+        <textarea class="textarea" id="f-phases" name="phases" rows="5" spellcheck="false">{% for ph in p.phases or [] %}{{ ph.name }} | {{ ph.start or '' }} | {{ ph.end or '' }} | {{ ph.rules }}
+{% endfor %}</textarea>
+      </div>
+      <div class="log-row stack">
+        <label class="label" for="f-notes">Notes <span class="faint">(optional)</span></label>
+        <textarea class="textarea" id="f-notes" name="notes" rows="3">{{ p.notes or '' }}</textarea>
+      </div>
+      {% endif %}
+    </div>
+    <div class="log-foot">
+      <div class="grp grp-main">
+        <button class="btn btn-primary btn-lg" type="submit">{{ "Start" if onboarding else "Save plan" }}</button>
+      </div>
+    </div>
+  </form>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  var d = document.getElementById("f-hards");
+  function sync() {
+    var r = document.querySelector('input[name="hards"]:checked');
+    d.hidden = !r || r.value !== "date";
+    d.required = !d.hidden;
+  }
+  document.querySelectorAll('input[name="hards"]').forEach(function (r) { r.addEventListener("change", sync); });
+  sync();
+})();
+</script>
+{% endblock %}

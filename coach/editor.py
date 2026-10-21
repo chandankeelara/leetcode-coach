@@ -62,6 +62,7 @@ def _guard(s, h, text, own_code=True):
     bad = _svc().leak_words(_split_camel(text), exempt, s)
     if bad:
         raise ValueError("leak: " + ", ".join(bad))
+    _svc().rule_zero_check(s, h.user_id, text, h)
 
 
 def _one_line(text, limit, what):

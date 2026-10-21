@@ -19,6 +19,12 @@
         <span class="eyebrow">It was testing</span>
         <strong>{{ r.pattern_name or r.pattern or "Unknown" }}</strong>
       </div>
+      {% if r.why %}
+      <div class="rv-pattern rv-why">
+        <span class="eyebrow">Why your coach picked it</span>
+        <span>{{ r.why }}</span>
+      </div>
+      {% endif %}
     </div>
 
     {% if a %}

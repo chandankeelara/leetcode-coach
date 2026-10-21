@@ -46,8 +46,9 @@ def csrf(c):
 
 
 def start(c):
+    """Open a problem the way a student without a coach does: the default pick."""
     t = csrf(c)
-    c.post("/solve", data={"csrf": t})
+    c.post("/solve/default", data={"csrf": t})
     return t
 
 
@@ -311,3 +312,117 @@ def test_statement_endpoint_renders_drawings(env):
     j = c.get("/statement").json()
     assert "viz-list" in j["html"] and "viz-back" in j["html"]
     assert "viz-list" in c.get("/solve").text
+
+
+# ---- coach-led choice: Next problem asks the coach; plan and onboarding ---------------------
+def test_next_problem_asks_the_coach_when_online(env):
+    c, fake = env
+    login(c)
+    t = csrf(c)
+    r = c.post("/solve", data={"csrf": t})
+    assert r.status_code == 303 and r.headers["location"] == "/next"
+    assert fake.h is None                                     # the page picked nothing
+    assert [k for k, _ in fake.events] == ["next_requested"]
+    page = c.get("/next").text
+    assert "Your coach is choosing your next problem" in page
+    assert re.search(r'id="wait-off"[^>]*hidden', page)
+    assert_clean(page)
+    assert_neutral_nav(page)
+    c.post("/solve", data={"csrf": t})                        # pressing again: one request only
+    assert [k for k, _ in fake.events] == ["next_requested"]
+    fake.next_problem(1)                                      # the coach hands one out
+    assert c.get("/next").headers["location"] == "/solve"
+
+
+def test_next_problem_offline_offers_connect_steps_and_default_pick(env):
+    c, fake = env
+    fake.online = False
+    login(c)
+    t = csrf(c)
+    assert c.post("/solve", data={"csrf": t}).headers["location"] == "/next"
+    assert fake.events == [] and fake.h is None
+    page = c.get("/next").text
+    assert "Your coach is not connected." in page and "/leetcode-coach:coach" in page
+    assert "Use the default pick" in page and re.search(r'id="wait-on"[^>]*hidden', page)
+    assert_clean(page)
+    r = c.post("/solve/default", data={"csrf": t})
+    assert r.headers["location"] == "/solve" and fake.h is not None
+    assert [k for k, _ in fake.events] == ["handout"]
+
+
+def test_default_pick_with_nothing_left(env, monkeypatch):
+    c, fake = env
+    login(c)
+    monkeypatch.setattr(fake, "next_problem", lambda uid: None)
+    r = c.post("/solve/default", data={"csrf": csrf(c)})
+    assert r.headers["location"] == "/next?none=1"
+    assert "Nothing to hand out right now." in c.get("/next?none=1").text
+
+
+def test_new_user_without_plan_goes_to_onboarding(env):
+    c, fake = env
+    fake.plan = None
+    login(c)
+    assert c.get("/").headers["location"] == "/onboarding"
+    assert c.get("/dashboard").headers["location"] == "/onboarding"
+    assert c.get("/plan").headers["location"] == "/onboarding"
+    page = c.get("/onboarding").text
+    assert "Set up your plan" in page and "Focus areas" in page and "Two Pointers" in page
+    assert "When to allow Hards" in page
+    tok = re.search(r'X-CSRF-Token": "([^"]+)"', page).group(1)
+    assert c.post("/solve", data={"csrf": tok}).headers["location"] == "/onboarding"
+    r = c.post("/onboarding", data={"csrf": tok, "target_date": "2026-12-15",
+                                    "daily_problems": "3", "minutes_per_day": "60",
+                                    "focus": ["heap", "two-pointers"], "hards": "date",
+                                    "hards_from": "2026-11-15"})
+    assert r.status_code == 303 and r.headers["location"] == "/"
+    assert fake.plan["daily_problems"] == "3" or fake.plan["daily_problems"] == 3
+    assert fake.plan["focus_patterns"] == ["heap", "two-pointers"]
+    assert fake.plan["hards_from"] == "2026-11-15"
+    assert c.get("/").status_code == 200
+    assert c.get("/onboarding").headers["location"] == "/plan"
+
+
+def test_onboarding_errors_rerender(env):
+    c, fake = env
+    fake.plan = None
+    login(c)
+    tok = re.search(r'X-CSRF-Token": "([^"]+)"', c.get("/onboarding").text).group(1)
+    r = c.post("/onboarding", data={"csrf": tok, "target_date": "", "hards": "never"})
+    assert r.status_code == 200 and "Pick a target date." in r.text and fake.plan is None
+    r = c.post("/onboarding", data={"csrf": tok, "target_date": "2026-12-15", "hards": "date"})
+    assert "Pick the date Hards start" in r.text
+
+
+def test_plan_page_view_edit_and_blocked_while_open(env):
+    c, fake = env
+    login(c)
+    assert 'href="/plan"' in c.get("/dashboard").text
+    page = c.get("/plan").text
+    assert "Your plan" in page and "Phases" in page
+    tok = re.search(r'X-CSRF-Token": "([^"]+)"', page).group(1)
+    r = c.post("/plan", data={"csrf": tok, "title": "Loop prep", "target_date": "2027-01-10",
+                              "daily_problems": "2", "minutes_per_day": "90", "hards": "never",
+                              "phases": "A | 2026-10-21 | 2026-11-30 | core first\n",
+                              "notes": "n"})
+    assert r.headers["location"] == "/plan?saved=1"
+    assert fake.plan["title"] == "Loop prep" and fake.plan["hards_from"] is None
+    assert fake.plan["phases"] == [{"name": "A", "start": "2026-10-21", "end": "2026-11-30",
+                                    "rules": "core first"}]
+    start(c)
+    assert c.get("/plan").headers["location"] == "/solve"
+    assert 'href="/plan"' not in c.get("/solve").text
+
+
+def test_reveal_shows_the_coach_reason(env, monkeypatch):
+    c, fake = env
+    login(c)
+    start(c)
+    c.post("/log", data={"csrf": csrf_from(c), "actual_min": "5"})
+    base = fake.reveal
+    monkeypatch.setattr(fake, "reveal", lambda hid: dict(base(hid), why="retry due: 2 bugs"))
+    assert "retry due: 2 bugs" in c.get("/reveal/1").text
+
+
+def csrf_from(c):
+    return re.search(r'X-CSRF-Token": "([^"]+)"', c.get("/log").text).group(1)

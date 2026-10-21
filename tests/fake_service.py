@@ -11,6 +11,30 @@ class FakeService:
         self.logged = {}
         self.n = 0
         self.online = True
+        self.plan = {"title": "My plan", "target_date": "2026-12-15", "daily_problems": 2,
+                     "minutes_per_day": 90, "focus_patterns": [], "phases": [],
+                     "hards_from": None, "notes": "", "created_at": "2026-10-21T09:00:00"}
+
+    def get_plan(self, uid):
+        return self.plan
+
+    def set_plan(self, uid, **fields):
+        for k in ("target_date", "hards_from"):
+            if k in fields and fields[k] is not None and not isinstance(fields[k], str):
+                fields[k] = fields[k].isoformat()
+        if fields.get("daily_problems") is not None and int(fields["daily_problems"]) < 1:
+            raise ValueError("daily_problems: an integer 1..20")
+        self.plan = dict(self.plan or {}, **fields)
+        return self.plan
+
+    def pattern_choices(self):
+        return [{"slug": "two-pointers", "name": "Two Pointers", "tier": 1},
+                {"slug": "heap", "name": "Heap", "tier": 1},
+                {"slug": "union-find", "name": "Union Find", "tier": 2}]
+
+    def request_next(self, uid):
+        if not any(k == "next_requested" for k, _ in self.events):
+            self.events.append(("next_requested", {"source": "web"}))
 
     def verify_user(self, username, password):
         return 1 if (username, password) == ("me", "pw") else None

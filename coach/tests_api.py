@@ -63,6 +63,7 @@ def _guard(s, h, cases):
     bad = _svc().leak_words(text, title, s)
     if bad:
         raise ValueError("leak: " + ", ".join(bad))
+    _svc().rule_zero_check(s, h.user_id, text, h)
 
 
 def _spec(s, handout_id):

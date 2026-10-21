@@ -36,6 +36,22 @@ def mode_for(slot):
     return MODE_BY_SLOT.get(slot, "coached")
 
 
+def handout_mode(h):
+    """The mode of a handout: the coach's choice (hand_out) if stored, else from the slot."""
+    return h.mode if getattr(h, "mode", None) in MODES else mode_for(h.slot)
+
+
+def hards_allowed(s, user_id, today, cfg=None):
+    """Hards allowed today? The active plan's hards_from (None = never) when the user has a
+    plan, else config hards_from."""
+    from .plans import active_plan
+    plan = active_plan(s, user_id)
+    if plan is not None:
+        return plan.hards_from is not None and today >= plan.hards_from
+    cfg = cfg or state.load_config(s)
+    return today >= cfg["hards_from"]
+
+
 class Handoff(BaseModel):
     """The ONLY thing the picker returns to the outside. No pattern, slot, tier, difficulty or
     progress. A test pins the field set. `mode` is timed|coached (see MODES), never a slot."""
@@ -88,13 +104,14 @@ def choose(s, user_id, today):
     retired = {n for n, c in clean_by_problem.items() if c >= cfg["clean_to_own"]}
     open_retry = {r.problem_number for r in retry_all}
     pool = _pool(problems)
+    hards_ok = hards_allowed(s, user_id, today, cfg)
 
     def ok(p, in_retry_slot=False):
         if p.number in blocked or p.number in retired:
             return False
         if p.pattern_slug in burned:
             return False
-        if p.difficulty == "H" and today < cfg["hards_from"]:
+        if p.difficulty == "H" and not hards_ok:
             return False
         if p.number in open_retry and not in_retry_slot:
             return False          # queued problems come back only through the retry ladder
@@ -174,25 +191,34 @@ def choose(s, user_id, today):
 
 def pick_next(s, user_id, today):
     """Choose a problem, record a `handouts` row stamped with the SERVER clock, return the
-    public Handoff. None when nothing passes the filters."""
+    public Handoff. None when nothing passes the filters. FALLBACK ONLY: the coach picks with
+    service.hand_out; this runs for `next_problem` and the page's "Use the default pick"."""
     pick = choose(s, user_id, today)
     if pick is None:
         return None
+    h = create_handout(s, user_id, today, pick.problem, pick.slot, pick.pattern)
+    return handoff_for(h, pick.problem)
+
+
+def create_handout(s, user_id, today, problem, slot, pattern, target_min=None, mode=None,
+                   pick_reason=None):
+    """Write a handouts row stamped now by the SERVER clock and start the coach's clock.
+    Returns the Handout row."""
     sess = state.current_session(s, user_id, today)
     at = datetime.combine(today, datetime.now().time())
     h = Handout(
-        user_id=user_id, session_id=sess.id, problem_number=pick.problem.number,
-        slot=pick.slot, pattern_slug=pick.pattern, handed_at=at,
-        target_min=target_for(s, user_id, pick.problem), status="open",
+        user_id=user_id, session_id=sess.id, problem_number=problem.number,
+        slot=slot, pattern_slug=pattern, handed_at=at,
+        target_min=target_min or target_for(s, user_id, problem), status="open",
         clock_state="running", clock_anchor=at, clock_accum_s=0, first_started_at=at,
-        checkpoints_fired=[],
+        checkpoints_fired=[], mode=mode, pick_reason=pick_reason,
     )
     s.add(h)
     s.flush()
     # the server starts the coach's clock at handout
     s.add(ClockEvent(user_id=user_id, handout_id=h.id, action="start", at=at, reason="handout",
                      value={"target_min": h.target_min}))
-    return handoff_for(h, pick.problem)
+    return h
 
 
 RETRY_TARGET_FACTOR = 0.8
@@ -213,5 +239,5 @@ def handoff_for(h, problem):
     return Handoff(
         handout_id=h.id, number=problem.number, title=problem.title,
         leetcode_url=leetcode_url(problem.lc_slug), paraphrase=problem.paraphrase,
-        started_at=h.handed_at, target_min=h.target_min, mode=mode_for(h.slot),
+        started_at=h.handed_at, target_min=h.target_min, mode=handout_mode(h),
     )

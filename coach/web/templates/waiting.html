@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Next · Coach{% endblock %}
+{% block body %}
+<section class="ready">
+  <div class="ready-inner">
+    <div id="wait-on" {% if not coach_online %}hidden{% endif %}>
+      <h1 class="ready-title"><span class="wait-pulse" aria-hidden="true"></span>Your coach is choosing your next problem…</h1>
+      <p class="ready-sub">It opens here by itself. The clock starts when it does.</p>
+    </div>
+    <div id="wait-off" {% if coach_online %}hidden{% endif %}>
+      {% if none_left %}
+      <h1 class="ready-title">Nothing to hand out right now.</h1>
+      <p class="ready-sub">Every problem is blocked for today. Come back tomorrow.</p>
+      {% else %}
+      <h1 class="ready-title">Your coach is not connected.</h1>
+      <ol class="wait-steps">
+        <li>Open Claude Code.</li>
+        <li>Type <code>/leetcode-coach:coach</code>.</li>
+        <li>Come back and press Ask my coach.</li>
+      </ol>
+      <div class="ready-form">
+        <form method="post" action="/solve">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <button class="btn btn-primary ready-go" type="submit">Ask my coach</button>
+        </form>
+        <form method="post" action="/solve/default">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <button class="btn btn-quiet" type="submit" id="default-pick">Use the default pick</button>
+        </form>
+      </div>
+      {% endif %}
+    </div>
+    <div class="ready-foot">
+      <a href="/help/connect">Setup</a>
+    </div>
+  </div>
+</section>
+{% endblock %}
+{% block scripts %}
+<script src="/static/live.js"></script>
+<script>
+/* Follow the coach's handout to /solve; show the connect steps if the coach drops. */
+(function(){if(!window.coachLive)return;var going=false;
+var on=document.getElementById("wait-on"),off=document.getElementById("wait-off");
+function go(){if(!going){going=true;location.href="/solve";}}
+function check(){if(going)return;fetch("/handout/state",{credentials:"same-origin",cache:"no-store"}).then(function(r){return r.ok?r.json():null;}).then(function(st){if(st&&st.open_handout_id!==null)go();}).catch(function(){});}
+function presence(o){if(typeof o!=="boolean"||!on.dataset.asked)return;on.hidden=!o;off.hidden=o;}
+if(!on.hidden)on.dataset.asked="1";
+coachLive.on("handout",check);
+coachLive.on("presence",function(d){presence(d.online);});
+coachLive.on("resync",function(d){if(d&&d.open_handout_id!==undefined){if(d.open_handout_id!==null)go();presence(d.online);}else check();});})();
+</script>
+{% endblock %}

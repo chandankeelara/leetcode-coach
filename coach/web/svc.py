@@ -26,7 +26,20 @@ class Svc:
             return picker.handoff_for(h, s.get(Problem, h.problem_number))
 
     def next_problem(self, user_id):
+        """FALLBACK picker (the page's "Use the default pick"). The coach picks with hand_out."""
         return _s.next_problem(user_id)
+
+    def request_next(self, user_id):
+        return _s.request_next(user_id)
+
+    def get_plan(self, user_id):
+        return _s.get_plan(user_id)
+
+    def set_plan(self, user_id, **fields):
+        return _s.set_plan(user_id, **fields)
+
+    def pattern_choices(self):
+        return _s.pattern_choices()
 
     def log_attempt(self, user_id, handout_id, **kw):
         r = _s.log_attempt(user_id, handout_id=handout_id, **kw)

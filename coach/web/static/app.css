@@ -1120,3 +1120,19 @@ body.app-solve .toasts { right: auto; left: var(--s4); bottom: var(--s4); }
 }
 .cm-s-coach .cm-coach-note { color: var(--hl-ink); font-style: normal; }
 .CodeMirror pre.CodeMirror-line.cm-coach-line { background: color-mix(in srgb, var(--hl) 6%, transparent); box-shadow: inset 2px 0 0 var(--hl-line); }
+
+/* plan + onboarding (/plan, /onboarding) and the waiting page (/next) */
+.plan-alert { display: flex; gap: 10px; align-items: center; padding: 10px 14px; border-radius: var(--r-2); margin-bottom: var(--s5); }
+.plan-alert svg { width: 18px; height: 18px; flex: none; }
+.plan-num { width: 96px; text-align: right; }
+.plan-date { width: 180px; }
+.plan-group { display: grid; gap: 8px; margin-top: var(--s2); }
+.plan-chip { cursor: pointer; user-select: none; }
+.plan-chip input { accent-color: var(--hl-ink); margin: 0; }
+.plan-chip:has(input:checked) { color: var(--text); border-color: var(--hl-ink); background: var(--hl-wash); }
+.plan-seg { align-self: flex-start; }
+.wait-steps { margin-top: var(--s5); padding-left: 1.3em; color: var(--text-2); display: grid; gap: 6px; font-size: var(--t-md); }
+.wait-pulse { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--hl); margin-right: 10px; vertical-align: middle; animation: wait-pulse 1.4s ease-in-out infinite; }
+@keyframes wait-pulse { 0%, 100% { opacity: .35; transform: scale(.85); } 50% { opacity: 1; transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) { .wait-pulse { animation: none; } }
+@media (max-width: 640px) { .plan-date, .plan-num { width: 100%; } }
