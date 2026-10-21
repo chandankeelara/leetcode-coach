@@ -10,7 +10,7 @@ Personal LeetCode coaching app: state store, CLI, and a local web UI.
     .venv/Scripts/python -m coach.cli create-user chandan     # prompts for a password
     .venv/Scripts/python -m coach.cli migrate <old-repo-path>  # idempotent
     .venv/Scripts/python -m coach.cli verify                   # must match the old status.py
-    ./start.ps1                                                # http://127.0.0.1:8000
+    ./start.ps1                                                # http://127.0.0.1:8731
 
 `COACH_SECRET` signs the session cookie. If it is not set, it is generated into `.env` on
 first run. `COACH_DB` picks the SQLite file (default `./coach.db`).
