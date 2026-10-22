@@ -93,6 +93,16 @@ def set_tests(user_id, handout_id, cases, mode="function", entry=None):
     with session_scope() as s:
         h = _handout(s, user_id, handout_id)
         _guard(s, h, cases)
+        number = h.problem_number
+    # expected outputs come from the problem's reference (coach/reference.py): a missing one is
+    # filled, a given one must agree (ValueError, nothing stored)
+    from . import reference
+    missing, given = sum(1 for c in cases if "expected" not in c), len(cases)
+    has_ref = reference.reference_of(number) is not None
+    cases, warnings = reference.resolve_cases(number, cases, mode)
+    filled = missing - (given - len(cases)) if has_ref else 0
+    with session_scope() as s:
+        h = _handout(s, user_id, handout_id)
         mine = s.scalars(select(TestCase.id).where(
             TestCase.handout_id == h.id, TestCase.source == "user")).all()
         if len(cases) + len(mine) > CASES_MAX:
@@ -108,7 +118,12 @@ def set_tests(user_id, handout_id, cases, mode="function", entry=None):
             s.add(TestCase(user_id=user_id, handout_id=h.id, source="coach", case=c))
         s.flush()
         _svc().emit(user_id, "tests", h.id, s)
-        return {"ok": True, "handout_id": h.id, "count": len(cases)}
+        out = {"ok": True, "handout_id": h.id, "count": len(cases)}
+        if filled > 0:
+            out["expected_from_reference"] = filled
+        if warnings:
+            out["warnings"] = warnings
+        return out
 
 
 def add_user_test(user_id, handout_id, case):
@@ -295,6 +310,7 @@ def run_tests(user_id, handout_id, code, who="user", cases=None, timeout_s=None)
 JUDGE_CASE_MAX = 3_000_000   # json chars per hidden case (a large case near the constraints)
 JUDGE_EXTRA_MAX = 30
 JUDGE_TIMEOUT_S = 3          # one wall timeout for the whole run; the runner has no per-case clock
+JUDGE_OUT_CAP = 3_000_000    # a large hidden case's output must compare whole, not cut at 64 KB
 VERDICTS = ("Accepted", "Wrong Answer", "Time Limit Exceeded", "Runtime Error")
 
 
@@ -363,12 +379,19 @@ def judge(user_id, handout_id, extra_cases=None):
         mode, entry = sp.mode, sp.entry or {}
         sub_id, code = sub.id, sub.code
         panel = [dict(r.case or {}) for r in _ordered(_case_rows(s, user_id, h.id))]
+    warnings = []
+    if extra:
+        from . import reference
+        with session_scope() as s:
+            number = _handout(s, user_id, handout_id).problem_number
+        extra, warnings = reference.resolve_cases(number, extra, mode, where="extra case")
     cases = [dict(c, _hidden=False) for c in panel] + [dict(c, _hidden=True) for c in extra]
     if not cases:
         raise ValueError("no test cases")
     hidden = [c.pop("_hidden") for c in cases]
     runner.check(mode, entry, cases)
-    results = runner.run(code, cases, mode, entry, timeout_s=JUDGE_TIMEOUT_S)
+    results = runner.run(code, cases, mode, entry, timeout_s=JUDGE_TIMEOUT_S,
+                         out_cap=JUDGE_OUT_CAP)
     verdict, first = "Accepted", None
     for i, (c, r) in enumerate(zip(cases, results)):
         if r["ok"] is not False:
@@ -390,6 +413,8 @@ def judge(user_id, handout_id, extra_cases=None):
     out = {"verdict": verdict, "first_failure": first, "passed": passed,
            "total": len(results), "slowest_ms": max(ms) if ms else None,
            "submission_id": sub_id}
+    if warnings:
+        out["warnings"] = warnings
     with session_scope() as s:
         row = s.get(Submission, sub_id)
         row.verdict, row.judged = verdict, out

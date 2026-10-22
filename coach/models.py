@@ -70,6 +70,17 @@ class Problem(Base):
     rating: Mapped[int | None] = mapped_column(Integer, nullable=True)
     rating_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     rated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # The coach's PRIVATE reference solution (coach/reference.py): the plain definition, slow
+    # on purpose, never shown to him. It computes expected outputs, runs the playground, the
+    # predict cards, the gallery and the tracer. reference_ok: True = matched the statement
+    # examples, False = failed them (may be replaced), None = not checked yet.
+    reference_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reference_entry: Mapped[object | None] = mapped_column(JSON, nullable=True)
+    reference_mode: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    reference_options: Mapped[object | None] = mapped_column(JSON, nullable=True)  # types, inplace, unordered
+    reference_set_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    reference_ok: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    reference_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class CoachSession(Base):
@@ -275,6 +286,8 @@ class CoachMessage(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
     # a coach illustration posted as this message (the thread renders the visual's html)
     visual_id: Mapped[int | None] = mapped_column(ForeignKey("visuals.id"), nullable=True)
+    # a predict card or an edge-case gallery posted as this message (coach/reference.py)
+    card_id: Mapped[int | None] = mapped_column(ForeignKey("cards.id"), nullable=True)
 
 
 class Visual(Base):
@@ -475,3 +488,45 @@ class CoachToken(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+# ---- running the question (coach/reference.py, coach/notes.py) ------------------------------
+class Trace(Base):
+    """One traced run (sys.settrace) of the reference or of his draft, for the coach only."""
+    __tablename__ = "traces"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    handout_id: Mapped[int] = mapped_column(ForeignKey("handouts.id"), index=True)
+    target: Mapped[str] = mapped_column(String(16))            # reference | his
+    input: Mapped[object] = mapped_column(JSON, default=dict)
+    frames: Mapped[object] = mapped_column(JSON, default=list)
+    result: Mapped[object | None] = mapped_column(JSON, nullable=True)
+    reason: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class Card(Base):
+    """A thread card. kind predict: "What does this return?" (answer checked against the
+    reference output, which is never in the open card). kind gallery: inputs -> outputs table."""
+    __tablename__ = "cards"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    handout_id: Mapped[int] = mapped_column(ForeignKey("handouts.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(16))              # predict | gallery
+    data: Mapped[object] = mapped_column(JSON, default=dict)   # inputs, outputs, choices, ...
+    answer: Mapped[str | None] = mapped_column(Text, nullable=True)
+    correct: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    answered_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class LearnerNote(Base):
+    """What the coach learned about how he learns. kind: explanation | motivation | pace |
+    other. Short, no names, no code."""
+    __tablename__ = "learner_notes"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(16))
+    note: Mapped[str] = mapped_column(String(300))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)

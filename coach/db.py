@@ -54,6 +54,10 @@ def init(path=None):
         rating.migrate(s)
         s.execute(text("UPDATE users SET is_admin = :t WHERE username = :u AND is_admin IS NULL"),
                   {"t": True, "u": os.environ.get("COACH_ADMIN", "chandan")})
+    # Data migration: the owner's first learner note (coach/notes.py), once.
+    from . import notes
+    with session_scope() as s:
+        notes.seed(s)
     return _engine
 
 

@@ -989,3 +989,8 @@ app.include_router(editor_routes.router)
 # ---- tests panel: cases, his own cases, Run (tests_routes.py) --------------------------------
 from . import tests_routes  # noqa: E402
 app.include_router(tests_routes.router)
+
+
+# ---- running the question: playground, predict cards (reference_routes.py) -------------------
+from . import reference_routes  # noqa: E402
+app.include_router(reference_routes.router)

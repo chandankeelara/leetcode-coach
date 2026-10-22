@@ -50,6 +50,21 @@
             {% if h.paraphrase %}{{ h.paraphrase|mdblock }}{% else %}<p class="stmt-wait"><span class="pulse" aria-hidden="true"></span>Your coach is writing the statement…</p>{% endif %}
           </div>
         </div>
+        <section class="play" id="play" aria-labelledby="play-h" hidden>
+          <h3 class="play-h" id="play-h">Try your own input</h3>
+          <p class="play-sub">Type an input and see what the answer should be.</p>
+          <form class="play-form" id="play-form" autocomplete="off">
+            <div class="play-fields" id="play-fields"></div>
+            <div class="play-foot">
+              <button class="btn btn-primary btn-sm" type="submit" id="play-run">Show output</button>
+              <span class="play-msg" id="play-msg" role="status" aria-live="polite"></span>
+            </div>
+          </form>
+          <div class="play-out" id="play-out" hidden>
+            <div class="play-row"><span class="play-k">Output</span><code class="play-val" id="play-val"></code></div>
+            <div class="play-draw" id="play-draw"></div>
+          </div>
+        </section>
       </div>
     </aside>
 
@@ -170,5 +185,7 @@
 <script src="/static/anim.js"></script>
 <link rel="stylesheet" href="/static/viz.css">
 <script src="/static/steps.js"></script>
+<script src="/static/play.js"></script>
+<link rel="stylesheet" href="/static/play.css">
 <link rel="stylesheet" href="/static/steps.css">
 {% endblock %}

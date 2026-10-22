@@ -443,7 +443,8 @@ async def wait(ctx, timeout_s):
 async def wait_for_event(ctx, timeout_s: int = 1500) -> dict:
     """Block until the learner does something on the website, then return {kind, payload};
     {kind: "timeout"} if nothing came. kind: approach | submission | stuck | skip | chat |
-    timer_over | clock_checkpoint | annotation_reply | understood | idle. Call it at the END of every turn while he is working. Claude Code may move it
+    timer_over | clock_checkpoint | annotation_reply | understood | idle | playground {input,
+    output} (he tried an input in the Problem tab) | prediction {id, correct}. Call it at the END of every turn while he is working. Claude Code may move it
     to the background after ~2 min; that is fine, the result still arrives."""
     return _jsonable(await wait(ctx, timeout_s))
 
@@ -726,6 +727,85 @@ def judge(ctx, extra_cases: list | None = None) -> dict:
         return _jsonable(ctx.svc.judge(ctx.user_id, hid, extra_cases))
     except ValueError as e:
         return {"error": str(e)}
+
+
+# ---- running the question: reference, tracer, cards, learner notes (coach/reference.py) -----
+def _svc_call(ctx, name, *a, **kw):
+    f = getattr(ctx.svc, name, None)
+    if f is None:
+        return {"error": "not supported"}
+    try:
+        return _jsonable(f(ctx.user_id, *a, **kw))
+    except ValueError as e:
+        return {"error": str(e)}
+
+
+def _on_open_call(ctx, name, *a, **kw):
+    hid = _open_handout(ctx)
+    if hid is None:
+        return {"error": "no open problem"}
+    return _svc_call(ctx, name, hid, *a, **kw)
+
+
+@tool
+def set_reference(ctx, code: str, mode: str = "function", entry: dict | None = None,
+                  options: dict | None = None, replace: bool = False, reason: str = "") -> dict:
+    """Store YOUR private reference solution for the open problem, right after set_statement. Write the PLAIN DEFINITION: slow, simple, by the problem's own words (brute force), never the intended technique. He never sees it. Max 200 lines. mode function: entry {class: "Solution", method}; design: entry {class}. options: case options for inputs {types: {arg|"return": "ListNode"|"TreeNode"}, inplace, unordered} (default: your first test case's). Checked on the cases with expected in his Tests panel: returns verified (true | false | null = nothing to check), mismatches [{case_index, input, expected, got, error}]: fix them. A verified reference is replaced only with replace=true and a reason; a failed or unchecked one may be resent freely. It then fills expected outputs (set_tests, judge), runs the playground, predict, gallery and trace."""
+    return _on_open_call(ctx, "set_reference", code, mode=mode, entry=entry or None,
+                         options=options, replace=replace, reason=reason)
+
+
+@tool
+def trace(ctx, input: dict, target: str = "reference", max_steps: int = 60,
+          watch: list[str] | None = None, allow: bool = False, reason: str = "") -> dict:
+    """Run one input line by line and get the state at each step: {trace_id, frames: [{line, func, locals, note}], truncated, result, error}. input: {name: value} (design: {ops, args}). target reference: your reference (to explain what the QUESTION asks). target his: his current draft, only after he pressed I'm stuck, a run failed or a judge failed (else allow=true with a reason). Locals: a linked list is {$type: ListNode, values, ids, cycle_to}, a tree {$type: TreeNode, values, ids}, a node inside a list {$type, val, id}; same id = same node. watch: only these names. max_steps <= 300. Turn it into a drawing with trace_to_animation."""
+    hid = _open_handout(ctx)
+    if hid is None:
+        return {"error": "no open problem"}
+    code = _current_code(ctx, hid) if target == "his" else None
+    return _svc_call(ctx, "trace", hid, input, target=target, max_steps=max_steps,
+                     watch=watch, allow=allow, reason=reason, code=code)
+
+
+@tool
+def trace_to_animation(ctx, trace_id: int | None = None, frames: list | None = None,
+                       base: str = "array", map: dict | None = None, ms: int = 1200,
+                       post: bool = False) -> dict:
+    """Map a trace onto a drawing: returns {kind: "animate", spec, frames} ready for show_visual("animate", spec), or posts it with post=true (leak guard as usual). base: array | list | tree | grid. map: {values: "<variable drawn>", pointers: {tag: "<variable holding an index or a node>"}, show: ["<variable shown in the caption>"], lines: [line numbers to keep], highlight: "<variable>", cell: ["<row var>", "<col var>"] (grid), keep_all: false (same drawing twice in a row is merged)}. At most 40 frames, evenly sampled."""
+    hid = _open_handout(ctx)
+    if hid is None:
+        return {"error": "no open problem"}
+    return _svc_call(ctx, "trace_to_animation", hid, trace_id=trace_id, frames=frames,
+                     base=base, map=map or {}, ms=ms, post=post)
+
+
+@tool
+def predict(ctx, input: dict, choices: list | None = None) -> dict:
+    """Post a "What does this return?" card in his thread with the input (drawn when it is a list, tree or grid). choices: none (he types the answer) or 2-4 values, exactly one of them the reference output. His answer is checked against your reference; you get a `prediction` event {id, correct, answer, output}. Returns {ok, id, output} (the output is for you)."""
+    return _on_open_call(ctx, "predict", input, choices=choices)
+
+
+@tool
+def gallery(ctx, inputs: list, caption: str = "") -> dict:
+    """Run your reference on 1-8 inputs and post ONE bubble: input -> output, drawn when structural. Each input {name: value} or {args: {...}, label: "..."}. Labels and caption are leak-guarded. For edge cases when he asks "what about...?". Returns {ok, id, rows: [{label, input, output, error}]}."""
+    return _on_open_call(ctx, "gallery", inputs, caption=caption)
+
+
+@tool
+def note_learner(ctx, kind: str, note: str) -> dict:
+    """Remember how he learns: kind explanation | motivation | pace | other; note at most 300 characters, plain words, no code, no names. Add one when an explanation clearly landed or clearly failed. Returns the stored note."""
+    return _svc_call(ctx, "add_note", kind, note)
+
+
+@tool
+def learner_notes(ctx, retire_id: int | None = None) -> dict:
+    """His active learner notes {notes: [{id, kind, note, created_at}]}. Read them before explaining. retire_id: mark that note no longer true (kept for history), then list."""
+    if retire_id is not None:
+        r = _svc_call(ctx, "retire_note", retire_id)
+        if "error" in r:
+            return r
+    r = _svc_call(ctx, "list_notes")
+    return r if isinstance(r, dict) else {"notes": r}
 
 
 # ---- building an MCP server from the registry ----------------------------------------------

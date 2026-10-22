@@ -311,6 +311,167 @@ def run_design(ns, entry, i, case, cap):
     return out
 
 
+TRACE_BUDGET = 600000      # json chars of all frames together
+
+
+class Tracer:
+    """sys.settrace on the solution's own lines: one frame per line event (state BEFORE the
+    line runs), plus call / return / raise notes. JSON-safe snapshots of the locals."""
+
+    def __init__(self, max_steps, watch):
+        self.max = max(1, min(int(max_steps or 60), 300))
+        self.watch = [str(w) for w in watch] if watch else None
+        self.frames, self.truncated, self.sent, self.chars = [], False, False, 0
+        self.ids, self.keep, self.pending = {}, [], {}
+
+    def nid(self, o):
+        k = id(o)
+        if k not in self.ids:
+            self.ids[k] = len(self.ids) + 1
+            self.keep.append(o)          # keep it alive: ids must not be reused
+        return self.ids[k]
+
+    def chain(self, n):
+        vals, ids, at, cyc = [], [], {}, None
+        while n is not None and len(vals) < 200:
+            if id(n) in at:
+                cyc = at[id(n)]
+                break
+            at[id(n)] = len(vals)
+            vals.append(self.snap(getattr(n, "val", None), 2))
+            ids.append(self.nid(n))
+            n = getattr(n, "next", None)
+        out = {"$type": "ListNode", "values": vals, "ids": ids, "cycle_to": cyc}
+        if n is not None and cyc is None:
+            out["more"] = True
+        return out
+
+    def tree(self, root):
+        vals, ids, q, qi = [], [], [root], 0
+        while qi < len(q) and len(vals) < 255:
+            n = q[qi]
+            qi += 1
+            if n is None:
+                vals.append(None)
+                ids.append(None)
+                continue
+            vals.append(self.snap(getattr(n, "val", None), 2))
+            ids.append(self.nid(n))
+            q.append(getattr(n, "left", None))
+            q.append(getattr(n, "right", None))
+        while vals and vals[-1] is None:
+            vals.pop()
+            ids.pop()
+        return {"$type": "TreeNode", "values": vals, "ids": ids}
+
+    def snap(self, v, depth=0):
+        if v is None or isinstance(v, (bool, int)):
+            return v
+        if isinstance(v, float):
+            return plain(v)
+        if isinstance(v, str):
+            return v if len(v) <= 200 else v[:200] + "..."
+        if is_list(v):
+            if depth == 0:
+                return self.chain(v)
+            return {"$type": "ListNode", "val": self.snap(getattr(v, "val", None), 3),
+                    "id": self.nid(v)}
+        if is_tree(v):
+            if depth == 0:
+                return self.tree(v)
+            return {"$type": "TreeNode", "val": self.snap(getattr(v, "val", None), 3),
+                    "id": self.nid(v)}
+        if depth >= 3:
+            return "..."
+        if isinstance(v, dict):
+            out = {}
+            for j, (k, x) in enumerate(v.items()):
+                if j >= 30:
+                    out["..."] = "+%%d" %% (len(v) - 30)
+                    break
+                out[str(k)[:60]] = self.snap(x, depth + 1)
+            return out
+        if isinstance(v, (set, frozenset)):
+            xs = [self.snap(x, depth + 1) for x in list(v)[:50]]
+            try:
+                xs = sorted(xs)
+            except TypeError:
+                pass
+            return xs
+        if isinstance(v, (list, tuple)) or type(v).__name__ == "deque":
+            xs = list(v)
+            out = [self.snap(x, depth + 1) for x in xs[:50]]
+            if len(xs) > 50:
+                out.append("...+%%d" %% (len(xs) - 50))
+            return out
+        try:
+            return repr(v)[:120]
+        except Exception:
+            return type(v).__name__
+
+    def local_vars(self, frame):
+        out = {}
+        for k, v in list(frame.f_locals.items()):
+            if k.startswith("__") or (self.watch is not None and k not in self.watch):
+                continue
+            if k == "self":
+                d = getattr(v, "__dict__", None)
+                if d:
+                    out["self"] = self.snap(dict(d), 1)
+                continue
+            if isinstance(v, type) or (callable(v) and not (is_list(v) or is_tree(v))):
+                continue
+            if type(v).__name__ == "module":
+                continue
+            out[k] = self.snap(v)
+        return out
+
+    def stop(self, frame=None):
+        self.truncated = True
+        sys.settrace(None)
+        if frame is not None:
+            frame.f_trace = None
+        self.flush()
+
+    def add(self, frame, note):
+        if len(self.frames) >= self.max:
+            self.stop(frame)
+            return
+        f = {"line": frame.f_lineno, "func": frame.f_code.co_name,
+             "locals": self.local_vars(frame), "note": note}
+        self.chars += len(json.dumps(f))
+        if self.chars > TRACE_BUDGET:
+            self.stop(frame)
+            return
+        self.frames.append(f)
+
+    def glob(self, frame, event, arg):
+        if self.truncated or frame.f_code.co_filename != "solution.py":
+            return None
+        self.pending[id(frame)] = "call " + frame.f_code.co_name
+        return self.local
+
+    def local(self, frame, event, arg):
+        if self.truncated:
+            return None
+        if event == "line":
+            self.add(frame, self.pending.pop(id(frame), ""))
+        elif event == "return":
+            try:
+                r = json.dumps(plain(arg))
+            except Exception:
+                r = "?"
+            self.add(frame, "return " + (r if len(r) <= 120 else r[:120] + "..."))
+        elif event == "exception":
+            self.add(frame, "raise " + getattr(arg[0], "__name__", "error"))
+        return None if self.truncated else self.local
+
+    def flush(self):
+        if not self.sent:
+            self.sent = True
+            emit({"trace": self.frames, "truncated": self.truncated})
+
+
 def main():
     spec = json.load(open(sys.argv[1], encoding="utf-8"))
     code, mode, entry, cases = spec["code"], spec["mode"], spec["entry"], spec["cases"]
@@ -335,11 +496,21 @@ def main():
         emit({"fatal": err_text(e), "stdout": cap.take()})
         return
     runner = run_design if mode == "design" else run_function
+    tr = spec.get("trace")
     for i, case in enumerate(cases):
         t0 = time.perf_counter()
         got, error = None, None
         try:
-            got = runner(ns, entry, i, case, cap)
+            if tr is not None and i == 0:
+                tracer = Tracer(tr.get("max_steps"), tr.get("watch"))
+                sys.settrace(tracer.glob)
+                try:
+                    got = runner(ns, entry, i, case, cap)
+                finally:
+                    sys.settrace(None)
+                    tracer.flush()
+            else:
+                got = runner(ns, entry, i, case, cap)
         except RecursionError as e:
             error = err_text(e)
         except BaseException as e:
@@ -469,20 +640,16 @@ def compare(got, expected, unordered=False):
 
 
 # ---- the run ---------------------------------------------------------------------------------
-def run(code, cases, mode, entry, timeout_s=3):
-    """Run `code` against `cases` in a subprocess. One result per case, in order."""
-    check(mode, entry, cases)
-    if not cases:
-        return []
+def _spawn(payload, timeout_s, out_cap=None):
+    """Run the harness on `payload` (code, mode, entry, cases[, trace]) in a fresh temp dir.
+    Returns (json lines of the results file, timed_out, crash text or None)."""
     tmp = tempfile.mkdtemp(prefix="coach-run-")
-    results = [None] * len(cases)
-    fatal = None
     timed_out = False
     try:
         with open(os.path.join(tmp, "harness.py"), "w", encoding="utf-8") as fh:
-            fh.write(HARNESS % {"out_cap": OUT_CAP})
+            fh.write(HARNESS % {"out_cap": out_cap or OUT_CAP})
         with open(os.path.join(tmp, "input.json"), "w", encoding="utf-8") as fh:
-            json.dump({"code": code or "", "mode": mode, "entry": entry, "cases": cases}, fh)
+            json.dump(payload, fh)
         kw = {}
         if os.name == "nt":
             kw["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -506,24 +673,45 @@ def run(code, cases, mode, entry, timeout_s=3):
         path = os.path.join(tmp, "results.jsonl")
         if os.path.exists(path):
             with open(path, encoding="utf-8", errors="replace") as fh:
-                raw = fh.read(READ_CAP)
+                raw = fh.read(READ_CAP if not out_cap else READ_CAP + 3 * out_cap)
+        lines = []
         for line in raw.splitlines():
             try:
-                d = json.loads(line)
+                lines.append(json.loads(line))
             except ValueError:
                 continue
-            if "fatal" in d:
-                fatal = d
-            elif isinstance(d.get("i"), int) and 0 <= d["i"] < len(cases):
-                results[d["i"]] = d
-        crash = None
-        if not timed_out and fatal is None and any(r is None for r in results):
-            with open(os.path.join(tmp, "stderr.txt"), encoding="utf-8", errors="replace") as fh:
-                tail = fh.read(OUT_CAP).strip().splitlines()
-            crash = f"crashed (exit {rc})" + (": " + tail[-1] if tail else "")
+        with open(os.path.join(tmp, "stderr.txt"), encoding="utf-8", errors="replace") as fh:
+            tail = fh.read(OUT_CAP).strip().splitlines()
+        crash = f"crashed (exit {rc})" + (": " + tail[-1] if tail else "")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+    return lines, timed_out, crash
 
+
+def run(code, cases, mode, entry, timeout_s=3, out_cap=None):
+    """Run `code` against `cases` in a subprocess. One result per case, in order. out_cap: the
+    per-run cap on stdout and on each `got` (default OUT_CAP, 64 KB)."""
+    check(mode, entry, cases)
+    if not cases:
+        return []
+    lines, timed_out, crash_text = _spawn(
+        {"code": code or "", "mode": mode, "entry": entry, "cases": cases}, timeout_s, out_cap)
+    return _rows(cases, lines, timed_out, crash_text, timeout_s)
+
+
+def _rows(cases, lines, timed_out, crash_text, timeout_s):
+    results = [None] * len(cases)
+    fatal = None
+    for d in lines:
+        if not isinstance(d, dict):
+            continue
+        if "fatal" in d:
+            fatal = d
+        elif isinstance(d.get("i"), int) and 0 <= d["i"] < len(cases):
+            results[d["i"]] = d
+    crash = None
+    if not timed_out and fatal is None and any(r is None for r in results):
+        crash = crash_text
     out = []
     for i, case in enumerate(cases):
         r = results[i]
@@ -548,6 +736,33 @@ def run(code, cases, mode, entry, timeout_s=3):
                 row["ok"] = None
         out.append(row)
     return out
+
+
+TRACE_MAX_STEPS = 300
+
+
+def trace(code, case, mode, entry, max_steps=60, watch=None, timeout_s=5):
+    """Run ONE case with sys.settrace on the solution's lines. Returns {frames: [{line, func,
+    locals, note}], truncated, result, error}. Locals are JSON-safe snapshots: a ListNode local
+    is {"$type": "ListNode", "values", "ids", "cycle_to"} (cycle-safe, 200 nodes max), a
+    TreeNode {"$type": "TreeNode", "values" (level order), "ids"}, a node inside a container
+    {"$type", "val", "id"} (same id = same node); lists 50 items, depth 3, strings 200 chars.
+    `watch`: only these names. Stops recording at max_steps (truncated true), the code still
+    finishes inside the timeout."""
+    check(mode, entry, [case])
+    steps = max(1, min(int(max_steps or 60), TRACE_MAX_STEPS))
+    if watch is not None and not (isinstance(watch, list) and all(isinstance(w, str) for w in watch)):
+        raise ValueError("watch must be a list of variable names")
+    lines, timed_out, crash = _spawn(
+        {"code": code or "", "mode": mode, "entry": entry, "cases": [case],
+         "trace": {"max_steps": steps, "watch": watch}}, timeout_s)
+    frames, truncated = [], False
+    for d in lines:
+        if isinstance(d, dict) and "trace" in d:
+            frames, truncated = d.get("trace") or [], bool(d.get("truncated"))
+    row = _rows([case], lines, timed_out, crash, timeout_s)[0]
+    return {"frames": frames, "truncated": truncated, "result": row["got"],
+            "error": row["error"], "stdout": row["stdout"]}
 
 
 def summary(results):

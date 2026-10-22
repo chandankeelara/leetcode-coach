@@ -120,6 +120,9 @@ def _open_handout(s, user_id, today):
 
 
 # ---- read tools ------------------------------------------------------------------------------
+from .notes import notes_for  # noqa: E402
+
+
 def get_profile(user_id, today=None):
     """Everything the coach picks by: {today, plan, ledger, patterns, recent_attempts, backlog,
     streak, clean_rate}. Progress data: never shown to the learner before a handoff."""
@@ -170,6 +173,7 @@ def get_profile(user_id, today=None):
                 "default_budget": {d: stp.split(stp.default_total(d, rb["rank"], False))
                                    for d in "EMH"},
                 "code_speed": _code_speed(s, user_id),
+                "notes": notes_for(s, user_id),
                 "plan": plan_dict(c.plan, today) if c.plan else None,
                 "ledger": ledger, "patterns": patterns, "recent_attempts": recent,
                 "backlog": bl, "streak": rules.streak(c.atts, today),

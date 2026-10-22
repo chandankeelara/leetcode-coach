@@ -1273,8 +1273,10 @@ def list_messages(user_id, since_id=0, limit=200):
                 return None
             return {"id": v.id, "kind": v.kind, "caption": v.caption,
                     "html": "" if v.cleared_at else v.html, "cleared": v.cleared_at is not None}
+        from .reference import card_for_message
         return [{"id": m.id, "role": m.role, "content": m.content, "handout_id": m.handout_id,
-                 "created_at": m.created_at.isoformat(), "visual": visual(m)} for m in rows]
+                 "created_at": m.created_at.isoformat(), "visual": visual(m),
+                 "card": card_for_message(s, m.card_id) if m.card_id else None} for m in rows]
 
 
 def last_message_id(user_id):
@@ -1469,3 +1471,10 @@ from .feedback import (is_admin, list_requests, record_friction,  # noqa: E402
 
 # ---- coach scoring and the code budget at unlock (coach/scoring.py) --------------------------
 from .scoring import ScoreRefused, score_attempt, unlock_with_budget  # noqa: E402
+
+
+# ---- running the question: reference, tracer, playground, cards (coach/reference.py) ---------
+from .reference import (RateLimited, answer_predict, gallery, get_trace,  # noqa: E402
+                        playground_run, playground_state, predict, reference_of, set_reference,
+                        trace, trace_to_animation)
+from .notes import add_note, list_notes, retire_note  # noqa: E402
