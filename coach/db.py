@@ -4,6 +4,7 @@ Which database, in order: the `path` argument, env COACH_DB_URL (any SQLAlchemy 
 postgresql+psycopg://user:pw@host/db), env COACH_DB (sqlite file path), ./coach.db.
 """
 import os
+import threading
 from contextlib import contextmanager
 
 from sqlalchemy import create_engine, event, inspect, text
@@ -94,15 +95,26 @@ def add_attempt_handout_index(engine):
         return False
 
 
+_init_lock = threading.Lock()
+
+
+def _ensure_init():
+    # The first requests after a start can arrive together (page + live stream); without the
+    # lock each one runs init() and the data migrations race (seen 2026-10-21: two placement
+    # inserts, UNIQUE constraint failed on ratings.user_id).
+    if _maker is None:
+        with _init_lock:
+            if _maker is None:
+                init()
+
+
 def get_engine():
-    if _engine is None:
-        init()
+    _ensure_init()
     return _engine
 
 
 def new_session():
-    if _maker is None:
-        init()
+    _ensure_init()
     return _maker()
 
 
