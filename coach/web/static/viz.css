@@ -39,8 +39,17 @@
 .viz-array .viz-col + .viz-col { margin-left: -1px; }
 .viz-array .viz-col:first-child .viz-cell { border-radius: var(--r-1) 0 0 var(--r-1); }
 .viz-array .viz-col:last-child .viz-cell { border-radius: 0 var(--r-1) var(--r-1) 0; }
-.has-ptr .viz-ptr { height: 16px; display: flex; align-items: flex-end; }
-.has-ptr .viz-col-ptr .viz-ptr::after { content: "\25BE"; margin-left: 2px; font-size: 10px; }
+/* tag name over a centred caret, so the caret points at the middle of its cell */
+.has-ptr .viz-ptr {
+  height: 24px; display: flex; flex-direction: column; align-items: center; justify-content: flex-end;
+}
+.has-ptr .viz-col-ptr .viz-ptr::after { content: "\25BE"; font-size: 10px; line-height: 9px; }
+/* dim: in the input but not reached yet; same box, so nothing moves */
+.viz-cell.viz-dim {
+  background: transparent; border-style: dashed; border-color: var(--line-2);
+  color: color-mix(in srgb, var(--text-3) 70%, transparent); font-weight: 500;
+}
+.viz-col-dim .viz-idx { opacity: 0.55; }
 .viz-col:not(.viz-col-ptr) .viz-ptr:empty { visibility: hidden; }
 .viz-array:not(.has-ptr) .viz-ptr { display: none; }
 
@@ -170,7 +179,7 @@
 .viz-anim .is-moved { opacity: 0; }
 /* array tags float over their column so a wide name never widens it: cells stay put across frames */
 .viz-anim .viz-array.has-ptr { padding-inline: 10px; }
-.viz-anim .viz-array.has-ptr .viz-col { position: relative; padding-top: 20px; }
+.viz-anim .viz-array.has-ptr .viz-col { position: relative; padding-top: 28px; }
 .viz-anim .viz-array.has-ptr .viz-ptr { position: absolute; top: 0; left: 50%; translate: -50% 0; }
 .viz-anim-caps { display: grid; margin-top: var(--s2); }
 .viz-anim-cap {

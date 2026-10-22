@@ -329,7 +329,8 @@ SPAN_RUNS = [(0, 0), (1, 1), (2, 2), (2, 3), (4, 4), (2, 5), (1, 6)]
 
 def _span_anim():
     return {"base": "array", "ms": 900, "frames": [
-        {"spec": {"values": SPAN, "highlight": [[a, b]], "pointers": {"day": b}},
+        {"spec": {"values": SPAN, "highlight": [[a, b]], "pointers": {"day": b},
+              "dim": [[b + 1, len(SPAN) - 1]] if b + 1 < len(SPAN) else []},
          "caption": f"day {b + 1}: {SPAN[b]} → span {b - a + 1}"} for a, b in SPAN_RUNS]}
 
 
@@ -448,3 +449,26 @@ def test_animate_bubble_in_thread_and_assets(thread):
     assert re.search(r"@media \(prefers-reduced-motion: reduce\)\s*\{\s*\.viz-anim", css)
     js = (web / "anim.js").read_text(encoding="utf-8")
     assert "MutationObserver" in js and "IntersectionObserver" in js and "prefers-reduced-motion" in js
+
+
+def test_array_dim_marks_cells_not_reached_and_keeps_layout():
+    out = viz.render("array", {"values": [1, 2, 3, 4], "highlight": [1, 3], "dim": [[2, 3]]})
+    assert out.count("viz-cell viz-dim") == 2 and out.count("viz-col viz-col-dim") == 2
+    assert out.count("viz-hl") == 1                                 # a dimmed cell is not lit
+    assert out.count('class="viz-col') == 4                         # still in the layout
+    assert viz.texts("array", {"values": [1], "dim": [0]}) == []
+    with pytest.raises(ValueError):
+        viz.render("array", {"values": [1], "dim": [[0, 1, 2]]})
+    anim = viz.render("animate", _span_anim())
+    frames = anim.split('class="viz-frame')[1:]
+    assert [f.count("viz-cell viz-dim") for f in frames] == [6, 5, 4, 3, 2, 1, 0]
+
+
+def test_array_tag_caret_is_centred_under_the_name():
+    from pathlib import Path
+    css = (Path(viz.__file__).parent / "web" / "static" / "viz.css").read_text(encoding="utf-8")
+    rule = re.search(r"\.has-ptr \.viz-ptr \{([^}]*)\}", css).group(1)
+    assert "flex-direction: column" in rule and "align-items: center" in rule
+    caret = re.search(r"\.viz-col-ptr \.viz-ptr::after \{([^}]*)\}", css).group(1)
+    assert "margin-left" not in caret
+    assert re.search(r"\.viz-cell\.viz-dim \{[^}]*dashed", css)

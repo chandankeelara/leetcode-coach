@@ -136,6 +136,7 @@ def _render_array(spec):
     vals = _list(spec, "values", limit=MAX_ITEMS)
     n = len(vals)
     hl = _index_set(spec, n)
+    dim = _index_set(spec, n, "dim")
     ptr = _pointers(spec, n)
     lab = _labels(spec, n)
     cols = []
@@ -148,10 +149,11 @@ def _render_array(spec):
             '<span class="viz-idx">{i}</span>'
             '<span class="viz-label">{lab}</span>'
             '</div>').format(
-                col=_cls("viz-col", "viz-col-ptr" if p else ""),
+                col=_cls("viz-col", "viz-col-ptr" if p else "", "viz-col-dim" if i in dim else ""),
                 key=Markup(' data-k="{}"').format(" ".join(p)) if p else "",
                 ptr=", ".join(p) if p else "",
-                cell=_cls("viz-cell", "viz-hl" if i in hl else "", "viz-null" if v is None else ""),
+                cell=_cls("viz-cell", "viz-hl" if i in hl and i not in dim else "",
+                          "viz-dim" if i in dim else "", "viz-null" if v is None else ""),
                 v=_txt(v, "value"), i=i, lab=lab.get(i, "")))
     if not cols:
         cols.append(Markup('<span class="viz-empty">[ ]</span>'))

@@ -258,6 +258,8 @@ events get no `say` at all: just `wait_for_event()` again.
   ms: 1200}` (2-40 frames; he gets play/pause, step, scrub, speed; it autoplays once when it
   scrolls into view). Same `values` in every frame and pointer tags glide between frames;
   otherwise frames cross-fade. Every frame caption and frame spec goes through the leak guard.
+  Array frames take `dim: [i] | [[start,end]]` for input not reached yet (a stream's later
+  days): dashed and muted, same place, so nothing moves.
 - After he named his approach or submitted, you may `animate` HIS code's state on a small
   input (his variable names as pointer tags) to debug; never before.
 - Never label a visual with a technique name. Captions, labels, pointer names and `why` go
