@@ -543,14 +543,16 @@
       if (again) { again = false; fetchMessages(); }
     });
   }
+  var stateSeq = 0;   /* only the newest /handout/state answer is applied (they can cross) */
   function fetchState() {
     if (closing) return;
+    var seq = ++stateSeq;
     fetch("/handout/state", { credentials: "same-origin", cache: "no-store" }).then(function (r) {
       if (r.redirected && /\/login/.test(r.url)) { location.href = "/login"; return null; }
       if (!r.ok) throw new Error(r.status);
       return r.json();
     }).then(function (st) {
-      if (!st || closing) return;
+      if (!st || closing || seq !== stateSeq) return;
       var open = st.open_handout_id === null ? "" : String(st.open_handout_id);
       if (open !== hid) { closed(open); return; }
       applyEditor(st.editor_open ? "1" : "0");
@@ -598,6 +600,9 @@
       if (stmt && stmt.hasAttribute("data-pending")) fetchStatement();
     });
   }
+  /* The clock must never be wrong for long: re-read it every 30 s while the tab is visible,
+     whatever happened to the stream. */
+  setInterval(function () { if (!document.hidden) fetchState(); }, 30000);
 
   function autosize() {
     input.style.height = "auto";

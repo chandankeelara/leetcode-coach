@@ -30,6 +30,13 @@
 .step-cur[data-over="1"] { background: var(--warn-wash); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
 .step-cur[data-over="1"] .step-time { color: var(--warn); }
 .clock[data-run="paused"] .step-time { color: var(--text-3); }
+.step-paused {
+  align-self: center; margin-left: 2px; font: 600 11px/1 var(--f-ui); color: var(--text-2);
+  white-space: nowrap; padding: 3px 7px; border-radius: 999px; background: var(--line-2);
+}
+.step-paused[hidden] { display: none; }
+/* with steps the step line carries the "Paused" chip; the total's would repeat it */
+.clock.has-steps .clock-paused { display: none; }
 
 /* step 1: the "I understand" panel replaces the approach box; the chat stays open for questions */
 .understood { display: none; }

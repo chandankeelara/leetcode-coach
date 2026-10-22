@@ -1,5 +1,6 @@
 """Steps of a problem, time budgets, MMR, problem ratings and the coach feedback channel."""
 import asyncio
+import json
 import re
 from datetime import date, datetime, timedelta
 from types import SimpleNamespace
@@ -14,7 +15,7 @@ from coach.web import app as webapp
 from coach.web.svc import Svc
 from tests.test_web import assert_clean
 
-TODAY = date(2026, 10, 21)
+TODAY = date.today()          # hand_out(today=...) dates the handoff; the clock reads now()
 
 
 def num(slug, d="M"):
@@ -609,3 +610,88 @@ def test_feedback_page_admin_only(web):
     assert r.status_code == 303 and service.list_requests()["rows"][0]["status"] == "planned"
     assert "Draw" not in c.get("/feedback?status=done").text.split("Requests")[1]
     assert c.post(f"/feedback/{rid}/status", data={"status": "nope", "csrf": tok}).status_code == 400
+
+
+# ---- a paused clock on the page (2026-10-22: paused on the server, his page kept counting) -
+def _paused_stepped(uid):
+    h = service.hand_out(uid, num("heap"), phase_budget={"understand": 2, "approach": 5,
+                                                         "code": 8})
+    service.understood(uid, h.handout_id)
+    back(h.handout_id, 90)
+    service.clock(uid, h.handout_id, "pause", reason="he asked for a break")
+    return h
+
+
+def test_solve_renders_a_paused_clock_paused_in_both_places(web):
+    c, uid = web
+    h = _paused_stepped(uid)
+    html = c.get("/solve").text
+    timer = re.search(r'<div class="clock[^"]*" id="timer"[^>]*>', html).group(0)
+    root = re.search(r'<section class="solve" id="solve"[^>]*>', html).group(0)
+    assert 'data-run="paused"' in timer and 'data-run="paused"' in root
+    steps_json = re.search(r"data-steps='([^']*)'", timer).group(1)
+    import html as _html
+    st = json.loads(_html.unescape(steps_json))
+    assert st["current"] == "approach" and 85 <= st["seconds"]["approach"] <= 95
+    paused_chip = re.search(r'<span class="clock-paused" id="t-paused"[^>]*>', html).group(0)
+    assert " hidden" not in paused_chip
+    # running again: both say running, the chip is hidden
+    service.clock(uid, h.handout_id, "resume", reason="back")
+    html = c.get("/solve").text
+    assert html.count('data-run="running"') == 2
+    assert re.search(r'<span class="clock-paused" id="t-paused"[^>]*\bhidden', html)
+
+
+def test_handout_state_paused_stepped_clock_is_frozen(web):
+    c, uid = web
+    h = _paused_stepped(uid)
+    st1 = c.get("/handout/state").json()["clock"]
+    assert st1["state"] == "paused" and st1["pause_reason"] == "he asked for a break"
+    assert st1["steps"]["current"] == "approach"
+    back(h.handout_id, 600)                          # ten minutes pass while paused
+    st2 = c.get("/handout/state").json()["clock"]
+    assert st2["state"] == "paused"
+    assert st2["elapsed_s"] == st1["elapsed_s"]
+    assert st2["steps"]["seconds"] == st1["steps"]["seconds"]
+    service.clock(uid, h.handout_id, "resume", reason="back")
+    assert c.get("/handout/state").json()["clock"]["state"] == "running"
+    service.clock(uid, h.handout_id, "pause", reason="again")
+    service.clock(uid, h.handout_id, "reset", reason="from scratch")
+    st3 = c.get("/handout/state").json()["clock"]
+    assert st3["state"] == "running" and st3["elapsed_s"] < 5
+    assert st3["steps"]["seconds"]["approach"] < 5
+
+
+def test_stream_pings_are_events_and_retry_is_short(web, monkeypatch):
+    c, uid = web
+    monkeypatch.setattr(webapp, "STREAM_PING_S", 0.05)
+    monkeypatch.setattr(webapp, "STREAM_POLL_S", 0.02)
+    body = c.get("/stream?max_s=0.4").text.replace("\r\n", "\n")
+    assert body.startswith(f"retry: {webapp.STREAM_RETRY_MS}\n")
+    assert "event: ping\ndata: {}\n\n" in body and not re.search(r"^: ping", body, re.M)
+    for block in body.split("\n\n"):              # pings carry no id: Last-Event-ID stays put
+        if "event: ping" in block:
+            assert "id:" not in block
+
+
+def test_live_js_has_watchdog_and_parks_hidden_tabs():
+    from pathlib import Path
+    js = (Path(webapp.__file__).parent / "static" / "live.js").read_text(encoding="utf-8")
+    assert '"ping"' in js and "WATCHDOG_MS" in js and "PARK_MS" in js
+    assert "pageshow" in js and "persisted" in js
+    steps_js = (Path(webapp.__file__).parent / "static" / "steps.js").read_text(
+        encoding="utf-8")
+    assert "step-paused" in steps_js
+
+
+def test_ui_events_pruned_inside_a_caller_transaction(world):
+    from coach.models import UiEvent
+    for _ in range(5):
+        service.emit(world, "clock", 1)
+    with db.session_scope() as s:
+        for e in s.query(UiEvent):
+            e.created_at = datetime.now() - timedelta(hours=2)
+    with db.session_scope() as s:                  # the path every coach write takes
+        service.emit(world, "clock", 1, s)
+    with db.session_scope() as s:
+        assert s.query(UiEvent).count() == 1

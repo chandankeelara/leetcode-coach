@@ -46,6 +46,10 @@
     cur.appendChild(el("span", "step-t", st.title));
     curTime = el("span", "step-time");
     cur.appendChild(curTime);
+    /* a paused clock says so in the step line too (on a phone the total is hidden) */
+    var chip = el("span", "step-paused", "Paused");
+    chip.hidden = run;
+    cur.appendChild(chip);
     box.appendChild(cur);
     tick();
   }
@@ -56,6 +60,7 @@
     var budget = ((st.budget || {})[st.current] || 0) * 60;
     curTime.textContent = fmt(n) + " / " + fmt(budget);
     cur.dataset.over = budget && n >= budget ? "1" : "";
+    cur.dataset.run = run ? "running" : "paused";
   }
   document.addEventListener("coach:clock", function (ev) {
     var c = ev.detail || {};

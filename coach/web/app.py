@@ -505,9 +505,10 @@ async def handout_state_route(request: Request):
 
 
 STREAM_POLL_S = 0.25        # how often /stream reads ui_events
-STREAM_PING_S = 15.0        # SSE comment keep-alive
+STREAM_PING_S = 15.0        # keep-alive `ping` event (live.js reconnects after 40 s of silence)
 STREAM_PRESENCE_S = 2.0     # how often /stream re-checks coach_online (catches going offline)
 STREAM_MAX_S = 300.0        # recycle each stream; EventSource reconnects with Last-Event-ID
+STREAM_RETRY_MS = 1000      # EventSource reconnect delay after a recycle
 
 
 def _sse(kind, data, eid=None):
@@ -554,7 +555,8 @@ async def stream(request: Request, since: int | None = None, max_events: int = 0
         cursor, sent = since, 0
         hello = await run_in_threadpool(_hello, uid)
         online = hello["online"]
-        yield _sse("hello", hello, cursor)
+        # retry: reconnect 1 s after each recycle (the browser's default is ~3 s)
+        yield f"retry: {STREAM_RETRY_MS}\n" + _sse("hello", hello, cursor)
         sent += 1
         last_ping = last_presence = loop.time()
         while not (max_events and sent >= max_events):
@@ -588,7 +590,8 @@ async def stream(request: Request, since: int | None = None, max_events: int = 0
                     continue
             if now - last_ping >= STREAM_PING_S:
                 last_ping = now
-                yield ": ping\n\n"
+                # a named event (no id), not a comment: the page's watchdog only sees events
+                yield "event: ping\ndata: {}\n\n"
             await asyncio.sleep(STREAM_POLL_S)
 
     return StreamingResponse(gen(), media_type="text/event-stream", headers={
