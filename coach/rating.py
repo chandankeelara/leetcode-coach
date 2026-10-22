@@ -285,7 +285,10 @@ def coach_score(parts, abandoned=False):
 def apply_coach(s, att, parts, summary=""):
     """Rate a logged attempt from the coach's parts. Once: RatingRefused if it already has a
     rating event. Returns the RatingEvent."""
-    if event_for(s, att.id) is not None:
+    prev = event_for(s, att.id)
+    if prev is not None:
+        if (prev.breakdown or {}).get("scored_by") == "auto" and                 not (prev.breakdown or {}).get("reasons"):
+            return attach_reasons(s, prev, parts, summary)      # abandoned: reasons only, once
         raise RatingRefused("this attempt is already scored; a score is final")
     actual, bd = coach_score(parts, abandoned=att.outcome == "abandoned")
     summ = " ".join(str(summary or "").split())
@@ -293,6 +296,34 @@ def apply_coach(s, att, parts, summary=""):
         raise RatingRefused(f"summary: at most {WHY_MAX} characters")
     bd["summary"] = summ
     return _commit(s, att, actual, bd)
+
+
+# ---- abandoned: scored at once, 0, no pending (coach/service.py log_attempt) --------------------
+def apply_auto_abandoned(s, att):
+    """An abandoned attempt scores 0 the moment it is logged (scored_by "auto"); the coach may
+    later attach reasons once (attach_reasons) but never changes the score. Returns the event."""
+    ev = event_for(s, att.id)
+    if ev is not None:
+        return ev
+    bd = {"parts": {}, "hints": None, "raw": 0.0, "hint_penalty": 0.0, "abandoned": True,
+          "actual": 0.0, "scored_by": "auto", "summary": "", "reasons": False}
+    return _commit(s, att, 0.0, bd)
+
+
+def attach_reasons(s, ev, parts, summary=""):
+    """The coach's reasons and summary on an auto-scored (abandoned) attempt: the parts are
+    validated like any score, then only their text is kept. actual, delta and MMR do not move."""
+    _, bd = coach_score(parts, abandoned=True)
+    summ = " ".join(str(summary or "").split())
+    if len(summ) > WHY_MAX:
+        raise RatingRefused(f"summary: at most {WHY_MAX} characters")
+    old = dict(ev.breakdown or {})
+    old["parts"] = {k: {"weight": v["weight"], "why": v["why"]} for k, v in bd["parts"].items()}
+    old["hints"] = {"why": bd["hints"]["why"]}
+    old["summary"] = summ
+    old["reasons"] = True
+    ev.breakdown = old                      # a new dict: SQLAlchemy sees the JSON change
+    return ev
 
 
 def ensure(s, user_id, exclude_attempt_id=None):
@@ -334,6 +365,7 @@ def event_dict(ev, s=None):
             "replayed": bool((ev.breakdown or {}).get("replayed")),
             "scored_by": (ev.breakdown or {}).get("scored_by") or "formula",
             "summary": (ev.breakdown or {}).get("summary") or None,
+            "reasons_attached": bool((ev.breakdown or {}).get("reasons")),
             "at": ev.created_at.isoformat() if ev.created_at else None}
 
 

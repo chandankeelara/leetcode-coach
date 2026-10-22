@@ -42,6 +42,7 @@ def init(path=None):
     Base.metadata.create_all(_engine)
     add_missing_columns(_engine)
     add_attempt_handout_index(_engine)
+    add_user_email_index(_engine)
     _maker = sessionmaker(_engine, expire_on_commit=False, future=True)
     # Data migration: users with history from before plans get PLAN.md as their plan.
     from . import plans
@@ -92,6 +93,20 @@ def add_attempt_handout_index(engine):
         print(f"[coach.db] uq_attempts_handout not created ({type(e).__name__}); "
               "duplicate attempts per handout exist, log_attempt still refuses new ones",
               file=sys.stderr)
+        return False
+
+
+def add_user_email_index(engine):
+    """Partial unique index users(email) WHERE email IS NOT NULL for a database created before
+    it existed (the column itself comes from add_missing_columns). True when it exists."""
+    import sys
+    try:
+        with engine.begin() as conn:
+            conn.execute(text('CREATE UNIQUE INDEX IF NOT EXISTS uq_users_email '
+                              'ON users (email) WHERE email IS NOT NULL'))
+        return True
+    except Exception as e:
+        print(f"[coach.db] uq_users_email not created ({type(e).__name__})", file=sys.stderr)
         return False
 
 

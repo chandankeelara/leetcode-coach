@@ -17,6 +17,8 @@ from itsdangerous import BadSignature, URLSafeTimedSerializer
 from markupsafe import Markup
 from starlette.concurrency import run_in_threadpool
 
+from .. import signup as _signup
+
 HERE = Path(__file__).parent
 COOKIE = "coach_session"
 FLASH = "coach_flash"
@@ -258,7 +260,8 @@ def clock_of(uid, h):
 # ---- auth ----------------------------------------------------------------------------------
 @app.get("/login", response_class=HTMLResponse)
 async def login_form(request: Request):
-    return render(request, "login.html", csrf=login_ser().dumps("login"), error=None)
+    return render(request, "login.html", csrf=login_ser().dumps("login"), error=None,
+                  signup_mode=_signup.mode())
 
 
 @app.post("/login")
@@ -271,7 +274,8 @@ async def login(request: Request, username: str = Form(""), password: str = Form
     uid = service().verify_user(username, password)
     if uid is None:
         return render(request, "login.html", csrf=login_ser().dumps("login"),
-                      error="Wrong username or password.", username=username)
+                      error="Wrong username or password.", username=username,
+                      signup_mode=_signup.mode())
     resp = go("/")
     resp.set_cookie(COOKIE, ser().dumps({"uid": uid, "csrf": secrets.token_hex(16)}),
                     max_age=MAX_AGE, httponly=True, samesite="lax")
@@ -283,6 +287,7 @@ async def logout(request: Request):
     await authed_form(request)
     resp = go("/login")
     resp.delete_cookie(COOKIE)
+    resp.delete_cookie(NEW_COOKIE)
     return resp
 
 
@@ -300,6 +305,11 @@ async def home(request: Request):
         return go("/solve")
     if needs_plan(sess["uid"]):
         return go("/onboarding")
+    if request.cookies.get(NEW_COOKIE):
+        # a brand-new account, first visit after onboarding: the connect step, once
+        resp = render(request, "connect_step.html", sess)
+        resp.delete_cookie(NEW_COOKIE)
+        return resp
     return render(request, "interstitial.html", sess)
 
 
@@ -699,16 +709,45 @@ async def log_post(request: Request):
     return go(f"/reveal/{h.handout_id}")
 
 
+def _not_mine(uid, handout_id):
+    """True when the service can tell and the handout belongs to someone else."""
+    f = getattr(service(), "handout_owner", None)
+    owner = f(handout_id) if f else None
+    return owner is not None and owner != uid
+
+
 @app.get("/reveal/{handout_id}", response_class=HTMLResponse)
 async def reveal(request: Request, handout_id: int):
     sess = require(request)
+    if _not_mine(sess["uid"], handout_id):
+        raise HTTPException(404)
     try:
         r = service().reveal(handout_id)
     except Exception:
         return go("/log" if service().current_handout(sess["uid"]) else "/")
     return render(request, "reveal.html", sess, nav="full", r=r, outcome=r.get("outcome"),
                   retry_action=r.get("retry_action"), a=r.get("attempt") or {},
-                  retry=r.get("retry_state") or {})
+                  retry=r.get("retry_state") or {}, hid=handout_id)
+
+
+# ---- live rating on the reveal page (signup branch) ------------------------------------------
+@app.get("/reveal/{handout_id}/rating")
+async def reveal_rating(request: Request, handout_id: int):
+    """The rating card of a logged handout as {pending, html}: the reveal page swaps it in
+    place when the coach scores (`rating` event), or polls this every 3 s without a stream."""
+    sess = require(request)
+    if _not_mine(sess["uid"], handout_id):
+        raise HTTPException(404)
+    try:
+        r = await run_in_threadpool(service().reveal, handout_id)
+    except Exception:
+        raise HTTPException(404)
+    pending = bool(r.get("score_pending")) and not r.get("rating")
+    body = templates.get_template("_rating_card.html").render(
+        {"request": request, "r": r, "hid": handout_id})
+    resp = JSONResponse({"pending": pending, "html": body, "handout_id": handout_id})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 # ---- dashboard -----------------------------------------------------------------------------
@@ -969,6 +1008,98 @@ async def plan_post(request: Request):
                                                             if v is not None})
         return _plan_page(request, sess, False, plan=plan, error=str(e))
     return go("/plan?saved=1")
+
+
+# ---- signup, invites, the one-time connect step (signup branch; coach/signup.py) -------------
+NEW_COOKIE = "coach_new"            # set by signup, spent by the first visit to / after onboarding
+
+
+def client_ip(request):
+    """The caller's address; behind a proxy (COACH_TRUST_PROXY=1) the first X-Forwarded-For."""
+    if os.environ.get("COACH_TRUST_PROXY") == "1":
+        fwd = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+        if fwd:
+            return fwd
+    return request.client.host if request.client else "?"
+
+
+def _signup_page(request, status=200, error=None, field=None, form=None):
+    m = _signup.mode()
+    return templates.TemplateResponse(request, "signup.html", {
+        "csrf": login_ser().dumps("signup"), "authed": False, "nav": "neutral",
+        "signup_mode": m, "error": error, "field": field, "f": form or {}}, status_code=status)
+
+
+@app.get("/signup", response_class=HTMLResponse)
+async def signup_form(request: Request, invite: str = ""):
+    try:
+        if ser().loads(request.cookies.get(COOKIE) or "", max_age=MAX_AGE):
+            return go("/")
+    except BadSignature:
+        pass
+    return _signup_page(request, form={"invite": invite})
+
+
+@app.post("/signup")
+async def signup_post(request: Request):
+    if _signup.mode() == "closed":
+        return _signup_page(request, 403)
+    form = await request.form()
+    try:
+        ok = login_ser().loads(form.get("csrf") or "", max_age=3600) == "signup"
+    except BadSignature:
+        ok = False
+    if not ok:
+        return go("/signup")
+    if _signup.rate_limited(client_ip(request)):
+        return _signup_page(request, 429, "Too many attempts from this address. "
+                            "Try again in an hour.", form={})
+    keep = {k: (form.get(k) or "") for k in ("username", "email", "invite")}
+    try:
+        uid = await run_in_threadpool(
+            _signup.signup, form.get("username"), form.get("email"), form.get("password"),
+            form.get("confirm"), form.get("invite"))
+    except _signup.SignupRefused as e:
+        return _signup_page(request, 400, str(e), e.field, keep)
+    resp = go("/onboarding")
+    resp.set_cookie(COOKIE, ser().dumps({"uid": uid, "csrf": secrets.token_hex(16)}),
+                    max_age=MAX_AGE, httponly=True, samesite="lax")
+    resp.set_cookie(NEW_COOKIE, "1", max_age=7 * 24 * 3600, httponly=True, samesite="lax")
+    return resp
+
+
+def _admin_only(sess):
+    if not is_admin(sess["uid"]):
+        raise HTTPException(404)
+
+
+def _invites_page(request, sess, new=None):
+    return render(request, "admin_invites.html", sess, nav="full", active="invites",
+                  invites=_signup.list_invites(), new=new, signup_mode=_signup.mode(),
+                  admin=True)
+
+
+@app.get("/admin/invites", response_class=HTMLResponse)
+async def admin_invites(request: Request):
+    sess = require(request)
+    _admin_only(sess)
+    return await run_in_threadpool(_invites_page, request, sess)
+
+
+@app.post("/admin/invites")
+async def admin_invites_new(request: Request):
+    sess, form = await authed_form(request)
+    _admin_only(sess)
+    code = await run_in_threadpool(_signup.create_invite, sess["uid"], form.get("note") or "")
+    return await run_in_threadpool(_invites_page, request, sess, code)
+
+
+@app.post("/admin/invites/{code}/revoke")
+async def admin_invites_revoke(request: Request, code: str):
+    sess, _ = await authed_form(request)
+    _admin_only(sess)
+    await run_in_threadpool(_signup.revoke_invite, code)
+    return go("/admin/invites")
 
 
 @app.middleware("http")

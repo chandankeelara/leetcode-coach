@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Create an account · Coach{% endblock %}
+{% block body %}
+<section class="auth">
+  <div class="card auth-card">
+    <h1>Create an account</h1>
+    {% if signup_mode == "closed" %}
+    <p class="sub">Signups are closed right now.</p>
+    <p class="auth-alt"><a href="/login">Back to sign in</a></p>
+    {% else %}
+    <p class="sub">{% if signup_mode == "invite" %}You need an invite code.{% else %}Takes a minute.{% endif %}</p>
+    {% if error %}
+    <div class="alert" role="alert">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16.5v.5"/></svg>
+      <span>{{ error }}</span>
+    </div>
+    {% endif %}
+    <form class="auth-form" method="post" action="/signup" novalidate>
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      {% if signup_mode == "invite" %}
+      <div class="field">
+        <label class="label" for="s-invite">Invite code</label>
+        <input class="input" id="s-invite" name="invite" value="{{ f.invite or '' }}" autocomplete="off" autocapitalize="characters" spellcheck="false" required {% if field == "invite" %}aria-invalid="true" autofocus{% endif %}>
+      </div>
+      {% endif %}
+      <div class="field">
+        <label class="label" for="s-user">Username</label>
+        <input class="input" id="s-user" name="username" value="{{ f.username or '' }}" autocomplete="username" autocapitalize="off" spellcheck="false" minlength="3" maxlength="24" required {% if field == "username" %}aria-invalid="true" autofocus{% endif %}>
+        <p class="hint">3 to 24 characters: a-z, 0-9, underscore.</p>
+      </div>
+      <div class="field">
+        <label class="label" for="s-email">Email</label>
+        <input class="input" id="s-email" name="email" type="email" value="{{ f.email or '' }}" autocomplete="email" required {% if field == "email" %}aria-invalid="true" autofocus{% endif %}>
+        <p class="hint">For account recovery later. We send nothing yet.</p>
+      </div>
+      <div class="field">
+        <label class="label" for="s-pw">Password</label>
+        <input class="input" id="s-pw" name="password" type="password" autocomplete="new-password" minlength="10" required {% if field == "password" %}aria-invalid="true" autofocus{% endif %}>
+        <p class="hint">At least 10 characters, mixing two kinds (letters, digits, symbols).</p>
+      </div>
+      <div class="field">
+        <label class="label" for="s-pw2">Repeat password</label>
+        <input class="input" id="s-pw2" name="confirm" type="password" autocomplete="new-password" required {% if field == "confirm" %}aria-invalid="true" autofocus{% endif %}>
+      </div>
+      <button class="btn btn-primary btn-lg" type="submit">Create account</button>
+    </form>
+    <p class="auth-alt">Already have one? <a href="/login">Sign in</a></p>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

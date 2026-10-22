@@ -25,6 +25,13 @@ class User(Base):
     coach_last_seen: Mapped[str | None] = mapped_column(String(40), nullable=True)
     # May open /feedback (the coach_requests list). db.init sets it for the owner account.
     is_admin: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # Signup (coach/signup.py): lowercase, unique when set (partial unique index). The owner
+    # account made by the CLI has none.
+    email: Mapped[str | None] = mapped_column(String(254), nullable=True)
+
+    __table_args__ = (Index("uq_users_email", "email", unique=True,
+                            sqlite_where=text("email IS NOT NULL"),
+                            postgresql_where=text("email IS NOT NULL")),)
 
 
 class Plan(Base):
@@ -474,4 +481,17 @@ class CoachToken(Base):
     label: Mapped[str] = mapped_column(String(80), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+# ---- signup invites (coach/signup.py) ------------------------------------------------------
+class Invite(Base):
+    """One-use signup code. Usable while used_by and revoked_at are both NULL."""
+    __tablename__ = "invites"
+    code: Mapped[str] = mapped_column(String(32), primary_key=True)
+    created_by: Mapped[int | None] = mapped_column(Integer, nullable=True)   # NULL = the CLI
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    used_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    note: Mapped[str] = mapped_column(String(200), default="")
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

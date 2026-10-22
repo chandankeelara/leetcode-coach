@@ -227,3 +227,13 @@ def _delegate(name):
 for _n in ("editor_state", "save_draft", "read_code", "set_stub", "mark_op_applied",
            "resolve_annotation", "reply_annotation", "annotations", "scratches"):
     setattr(Svc, _n, _delegate(_n))
+
+
+# ---- signup branch: who owns a handout (reveal pages are per user) ----------------------------
+def _handout_owner(self, handout_id):
+    from ..db import session_scope
+    with session_scope() as s:
+        return _handout_user(s, handout_id)
+
+
+Svc.handout_owner = _handout_owner

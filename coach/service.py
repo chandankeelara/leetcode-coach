@@ -918,6 +918,13 @@ def _log_attempt(user_id, handout_id=None, number=None, actual_min=None, bugs=0,
         out = {"attempt_id": att.id, "outcome": result, "retry": action,
                "problem_number": number, "actual_min": actual_min, "wall_min": wall_min,
                "clock_note": clock_note}
+        if h is not None and abandoned:
+            # abandoned is instant: 0 now, no pending; score_attempt may still attach reasons once
+            r = rating.event_dict(rating.apply_auto_abandoned(s, att))
+            out["score_pending"] = False
+            out["rating"] = {k: r[k] for k in ("before", "after", "delta", "rank", "rank_up")}
+            emit(user_id, "rating", h.id, s)
+            return out
         if h is not None:
             # the coach scores a live attempt (score_attempt, coach/scoring.py): no rating yet
             out["score_pending"] = True
@@ -1469,3 +1476,7 @@ from .feedback import (is_admin, list_requests, record_friction,  # noqa: E402
 
 # ---- coach scoring and the code budget at unlock (coach/scoring.py) --------------------------
 from .scoring import ScoreRefused, score_attempt, unlock_with_budget  # noqa: E402
+
+
+# ---- live rating on the reveal page (signup branch) ------------------------------------------
+UI_KINDS = UI_KINDS | {"rating"}            # emit() reads the module global at call time
