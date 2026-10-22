@@ -1,5 +1,6 @@
 """Coach visuals: the renderer, the html sanitiser, the leak guard, storage, /visuals."""
 import re
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -472,3 +473,236 @@ def test_array_tag_caret_is_centred_under_the_name():
     caret = re.search(r"\.viz-col-ptr \.viz-ptr::after \{([^}]*)\}", css).group(1)
     assert "margin-left" not in caret
     assert re.search(r"\.viz-cell\.viz-dim \{[^}]*dashed", css)
+
+
+# ---- new kinds: list links, graph, intervals, compare, string -------------------------------
+NEW_SPECS = {
+    "graph": {"nodes": [1, {"id": 2, "label": "two"}], "edges": [[1, 2, "<script>"]],
+              "caption": "<script>"},
+    "intervals": {"intervals": [[0, 10], [2, 4]], "labels": ["<script>", "b"], "caption": "<script>"},
+    "compare": {"before": {"kind": "array", "spec": {"values": ["<script>"]}},
+                "after": {"kind": "string", "spec": {"text": "<script>"}}, "caption": "<script>"},
+    "string": {"text": "<script>", "pointers": {"i": 0}, "caption": "<script>"},
+}
+_LINK = re.compile(r'<path class="([^"]+)" d="([^"]+)" marker-end="url\(#[\w-]+\)" '
+                   r'data-k="(link-\d+)"')
+
+
+@pytest.mark.parametrize("kind", sorted(NEW_SPECS))
+def test_new_kinds_render_and_escape(kind):
+    out = viz.render(kind, NEW_SPECS[kind])
+    assert f"viz-{kind}" in out and "<script" not in out and "&lt;script&gt;" in out
+    assert viz.KIND_LABEL[kind] and kind in viz.KINDS
+
+
+def _links(out):
+    return {k: c for c, _, k in _LINK.findall(out)}
+
+
+def test_list_default_chain_keeps_old_drawing_and_keys_links():
+    out = viz.render("list", {"values": [1, 2, 3]})
+    assert _links(out) == {"link-0": "viz-ll-next", "link-1": "viz-ll-next", "link-2": "viz-ll-next"}
+    assert 'data-k="null-2"' in out
+
+
+def test_list_custom_links_null_and_arcs():
+    out = viz.render("list", {"values": [1, 2, 3, 4, 5],
+                              "links": [[0, 4], [4, 1], [1, 3], [3, 2], [2, None]]})
+    ln = _links(out)
+    assert ln["link-0"] == ln["link-4"] == ln["link-1"] == "viz-ll-arc"     # not next in order
+    assert ln["link-3"] == "viz-ll-next"                                       # adjacent, backwards
+    assert out.count(">null</text>") == 1 and 'data-k="null-2"' in out
+    top = float(re.search(r'class="viz-ll-box" x="[^"]+" y="([^"]+)"', out).group(1))
+    starts = {k: float(d.split()[0].split(",")[1]) for _, d, k in _LINK.findall(out)
+              if k in ("link-0", "link-4", "link-1")}
+    assert any(y < top for y in starts.values()) and any(y > top + 30 for y in starts.values())
+    assert "next links" in out                                # aria label spells the links out
+    none = viz.render("list", {"values": [1, 2], "links": [[0, None]]})
+    assert 'data-k="link-1"' not in none                      # unlisted node: no arrow at all
+
+
+def test_list_rows_and_cross_links():
+    out = viz.render("list", {"values": [1, 2, 3, 4], "order": [[0, 1], [3, 2]], "offset": [0, 0.5],
+                              "links": [[0, 3], [3, 1], [1, 2], [2, None]],
+                              "pointers": {"a": 0, "b": 2}})
+    ys = {i: float(y) for i, y in re.findall(r'data-i="(\d)" data-x="[^"]+" data-y="([^"]+)"', out)}
+    assert ys["0"] == ys["1"] < ys["3"] == ys["2"]
+    xs = {i: float(x) for i, x in re.findall(r'data-i="(\d)" data-x="([^"]+)"', out)}
+    assert xs["0"] < xs["3"] < xs["1"] < xs["2"]                  # half-slot offset row
+    tag_y = {k: float(y) for k, y in re.findall(r'data-k="(\w)"><rect class="viz-ll-tag" x="[^"]+" '
+                                                 r'y="([^"]+)"', out)}
+    assert tag_y["a"] < ys["0"] and tag_y["b"] > ys["2"]          # bottom row tags go below
+
+
+@pytest.mark.parametrize("spec,msg", [
+    ({"values": [1, 2], "links": [[0, 5]]}, "out of range"),
+    ({"values": [1, 2], "links": [[0, 1], [0, None]]}, "two next"),
+    ({"values": [1, 2], "links": [[0]]}, "each link"),
+    ({"values": [1, 2], "links": [[0, 1]], "cycle_to": 0}, "not both"),
+    ({"values": [1, 2], "order": [0]}, "every node"),
+    ({"values": [1, 2], "order": [0, 0]}, "exactly once"),
+    ({"values": [1, 2], "order": [[0], 1]}, "list of rows"),
+    ({"values": [1] * 5, "order": [[0], [1], [2], [3], [4]]}, "at most 4"),
+    ({"values": [1, 2], "offset": [-1]}, "offset"),
+    ({"values": [1], "indices": "yes"}, "indices"),
+])
+def test_list_link_validation(spec, msg):
+    with pytest.raises(ValueError, match=msg):
+        viz.render("list", spec)
+
+
+def _relink_anim():
+    v = [1, 2, 3]
+    return {"base": "list", "frames": [
+        {"spec": {"values": v}},
+        {"spec": {"values": v, "links": [[0, None], [1, 2], [2, None]]}},
+        {"spec": {"values": v, "links": [[0, None], [1, 0], [2, None]]}},
+        {"spec": {"values": v, "order": [2, 1, 0], "links": [[0, None], [1, 0], [2, 1]]}}]}
+
+
+def test_animate_list_relinking_marks_changes_and_keeps_keys():
+    out = viz.render("animate", _relink_anim())
+    assert 'data-tween="1"' in out
+    frames = out.split('class="viz-frame')[1:]
+    keys = [sorted(k for _, _, k in _LINK.findall(f)) for f in frames]
+    assert all(k == ["link-0", "link-1", "link-2"] for k in keys)          # one key per source
+    chg = [sorted(k for c, _, k in _LINK.findall(f) if "viz-ll-chg" in c) for f in frames]
+    assert chg == [[], ["link-0"], ["link-1"], ["link-2"]]
+    xs = [dict(re.findall(r'data-i="(\d)" data-x="([^"]+)"', f)) for f in frames]
+    assert xs[0] == xs[1] == xs[2] and xs[3]["2"] == xs[0]["0"]             # reorder moves nodes
+    assert len(set(re.findall(r'<svg class="viz-svg viz-ll" width="(\d+)" height="(\d+)"', out))) == 1
+    js = (Path(viz.__file__).parent / "web" / "static" / "anim.js").read_text(encoding="utf-8")
+    assert "pairLinks" in js and "pairNodes" in js and "link-" in js
+
+
+def test_graph_layout_is_deterministic_and_layered():
+    spec = {"nodes": [0, 1, 2, 3], "edges": [[0, 1], [0, 2], [1, 3], [2, 3]], "directed": True}
+    a, b = viz.graph_layout(viz._graph_model(spec)), viz.graph_layout(viz._graph_model(spec))
+    assert a == b
+    assert a["0"][1] < a["1"][1] == a["2"][1] < a["3"][1]                     # one layer per depth
+    assert viz.render("graph", spec).count("marker-end") == 4
+    cyc = viz._graph_model({"nodes": ["a", "b", "c"], "edges": [["a", "b"], ["b", "c"], ["c", "a"]],
+                            "directed": True})
+    assert len({y for _, y in viz.graph_layout(cyc).values()}) > 1           # circle, not a row
+    grid = viz.graph_layout(viz._graph_model({"nodes": list(range(9)), "layout": "grid"}))
+    assert len({x for x, _ in grid.values()}) == 3
+
+
+def test_graph_weights_highlight_and_limits():
+    out = viz.render("graph", {"nodes": ["a", "b", "c"], "edges": [["a", "b", 7], ["b", "c"]],
+                               "highlight": {"nodes": ["a"], "edges": [["b", "a"]]}})
+    assert ">7</text>" in out and "marker-end" not in out                   # undirected: no heads
+    assert out.count('class="viz-g-edge viz-hl"') == 1 and out.count('class="viz-g-g viz-hl"') == 1
+    with pytest.raises(ValueError, match="not in spec.nodes"):
+        viz.render("graph", {"nodes": [1], "edges": [[1, 2]]})
+    with pytest.raises(ValueError, match="at most 40"):
+        viz.render("graph", {"nodes": list(range(41))})
+    with pytest.raises(ValueError, match="at most 80"):
+        viz.render("graph", {"nodes": [1, 2], "edges": [[1, 2]] * 81})
+    with pytest.raises(ValueError, match="layout"):
+        viz.render("graph", {"nodes": [1], "layout": "force"})
+    with pytest.raises(ValueError, match="duplicate"):
+        viz.render("graph", {"nodes": [1, 1]})
+    assert viz.texts("graph", {"nodes": [{"id": 1, "label": "home"}], "layout": "circle",
+                               "caption": "c"}) == ["c", "home"]
+
+
+def test_animate_graph_keeps_nodes_still():
+    spec = {"base": "graph", "frames": [
+        {"spec": {"nodes": [1, 2, 3], "edges": [[1, 2]]}},
+        {"spec": {"nodes": [1, 2, 3], "edges": [[1, 2], [2, 3], [3, 1]], "highlight": [3]}}]}
+    out = viz.render("animate", spec)
+    pos = [re.findall(r'data-i="(\d)"><circle class="viz-g-node" cx="([^"]+)" cy="([^"]+)"', f)
+           for f in out.split('class="viz-frame')[1:]]
+    assert pos[0] == pos[1]
+    assert len(set(re.findall(r'<svg class="viz-svg viz-g" width="(\d+)" height="(\d+)"', out))) == 1
+
+
+def test_intervals_stack_rows_and_merged_outline():
+    rows = viz.iv_rows([(1, 3), (2, 6), (8, 10), (15, 18), (3, 4)])
+    assert rows[0] == 0 and rows[1] == 1 and rows[2] == 0 and rows[3] == 0
+    assert rows[4] == 2                                      # touches [1,3] and overlaps [2,6]
+    out = viz.render("intervals", {"intervals": [[1, 3], [2, 6]], "merged": [[1, 6]],
+                                   "highlight": [1], "axis": {"min": 0, "max": 10}})
+    assert out.count('class="viz-iv-bar"') == 2 and out.count('class="viz-iv-merged"') == 1
+    assert out.count("viz-iv-g viz-hl") == 1 and ">10</text>" in out and ">0</text>" in out
+    for bad, msg in (({"intervals": [[1]]}, "start, end"), ({"intervals": [["a", 2]]}, "number"),
+                     ({"intervals": [[1, 2]], "axis": {"min": 3, "max": 1}}, "below"),
+                     ({}, "required")):
+        with pytest.raises(ValueError, match=msg):
+            viz.render("intervals", bad)
+    anim = viz.render("animate", {"base": "intervals", "frames": [
+        {"spec": {"intervals": [[1, 2]]}}, {"spec": {"intervals": [[1, 2], [5, 9]]}}]})
+    assert len(set(re.findall(r'<svg class="viz-svg viz-iv" width="(\d+)"', anim))) == 1
+
+
+def test_compare_marks_changes():
+    out = viz.render("compare", {"before": {"kind": "array", "spec": {"values": [3, 1, 2]}},
+                                 "after": {"kind": "array", "spec": {"values": [3, 2, 1, 9]}}})
+    before, after = out.split(">after<")
+    assert after.count("viz-chg") == 3 and "viz-chg" not in before and "viz-cmp-arrow" in out
+    off = viz.render("compare", {"before": {"kind": "array", "spec": {"values": [1]}},
+                                 "after": {"kind": "array", "spec": {"values": [2]}},
+                                 "mark_changes": False})
+    assert "viz-chg" not in off
+    ll = viz.render("compare", {"before": {"kind": "list", "spec": {"values": [1, 2, 3]}},
+                                "after": {"kind": "list", "spec": {"values": [1, 2, 3],
+                                                                   "links": [[0, 2], [2, 1], [1, None]],
+                                                                   "order": [0, 2, 1]}}})
+    a = ll.split(">after<")[1]
+    assert a.count('viz-ll-chg" d=') == 3 and a.count("viz-ll-node viz-chg") == 2
+    s = viz.render("compare", {"before": {"kind": "string", "spec": {"text": "abc"}},
+                               "after": {"kind": "string", "spec": {"text": "abd"}}})
+    assert s.split(">after<")[1].count("viz-chg") == 1
+    for bad in ({"before": {"kind": "animate", "spec": {}}, "after": {"kind": "array", "spec": {}}},
+                {"before": {"kind": "array"}, "after": {"kind": "array", "spec": {"values": []}}}):
+        with pytest.raises(ValueError):
+            viz.render("compare", bad)
+    with pytest.raises(ValueError, match="after:"):
+        viz.render("compare", {"before": {"kind": "array", "spec": {"values": [1]}},
+                               "after": {"kind": "array", "spec": {"values": "x"}}})
+    t = viz.texts("compare", {"before": {"kind": "list", "spec": {"values": [1], "caption": "b4"}},
+                              "after": {"kind": "string", "spec": {"text": "xy",
+                                                                   "pointers": {"lo": 0}}},
+                              "caption": "top"})
+    assert set(t) >= {"top", "b4", "xy", "lo"} and "list" not in t and "string" not in t
+
+
+def test_string_cells_pointers_and_spaces():
+    out = viz.render("string", {"text": "a b", "highlight": [[0, 1]], "pointers": {"i": 2}})
+    assert out.count('class="viz-col') == 3 and ">·</span>" in out and "viz-sp" in out
+    assert out.count("viz-hl") == 2 and 'data-k="i"' in out and "viz-str has-ptr" in out
+    with pytest.raises(ValueError, match="string"):
+        viz.render("string", {"text": 5})
+    with pytest.raises(ValueError, match="longer"):
+        viz.render("string", {"text": "x" * 201})
+    anim = viz.render("animate", {"base": "string", "frames": [
+        {"spec": {"text": "ab", "pointers": {"i": 0}}}, {"spec": {"text": "ab"}}]})
+    assert 'data-tween="1"' in anim and anim.count('class="viz-array viz-str has-ptr"') == 2
+
+
+@pytest.mark.parametrize("kind", ["graph", "intervals", "compare", "string", "list"])
+def test_new_kinds_in_statement_block(kind):
+    import json as _json
+    from coach.web.app import mdblock
+    spec = dict(NEW_SPECS.get(kind) or {"values": [1, 2], "links": [[1, 0], [0, None]]})
+    out = str(mdblock("Example:\n\n```viz\n" + _json.dumps({"kind": kind, **spec}) + "\n```\n"))
+    assert "viz-" + kind in out and "illustration unavailable" not in out
+
+
+def test_leak_guard_on_new_kinds(hw):
+    uid, hid = hw
+    for kind, spec in (
+            ("graph", {"nodes": [{"id": 1, "label": "heap"}]}),
+            ("intervals", {"intervals": [[1, 2]], "labels": ["the window"]}),
+            ("string", {"text": "ab", "pointers": {"window": 0}}),
+            ("compare", {"before": {"kind": "array", "spec": {"values": [1], "caption": "greedy"}},
+                         "after": {"kind": "array", "spec": {"values": [1]}}})):
+        with pytest.raises(ValueError, match="leak"):
+            service.show_visual(uid, hid, kind, spec)
+    assert _count_visuals() == 0
+    r = service.show_visual(uid, hid, "compare", {
+        "before": {"kind": "list", "spec": {"values": [1, 2]}},
+        "after": {"kind": "list", "spec": {"values": [1, 2], "links": [[1, 0], [0, None]]}}})
+    assert "viz-compare" in r["html"]
+    assert service.list_messages(uid)[-1]["content"] == "before and after"

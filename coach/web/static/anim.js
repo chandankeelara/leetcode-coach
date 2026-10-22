@@ -1,10 +1,12 @@
 /* Animated coach visuals (viz.py kind "animate"): a stack of server-rendered frames, one shown.
-   Same-shape array/list frames tween: pointer tags glide by name, cells cross-fade in place. */
+   Same-shape array/list/string frames tween: pointer tags glide by name, cells cross-fade in
+   place; list nodes glide to a new slot (data-i, data-x/y) and next-links morph by source
+   (data-k="link-<from>", path d interpolated when both paths share one command skeleton). */
 (function () {
   "use strict";
   var reduce = window.matchMedia("(prefers-reduced-motion: reduce)");
   var SPEEDS = [0.5, 1, 2];
-  var EASE = "cubic-bezier(.16, 1, .3, 1)";
+  var EASE = "cubic-bezier(.45, 0, .2, 1)";
   var seen = typeof IntersectionObserver === "function" ? new IntersectionObserver(onSeen, { threshold: 0.6 }) : null;
 
   function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
@@ -22,7 +24,7 @@
       ms: clamp(parseInt(fig.dataset.ms, 10) || 1200, 300, 6000),
       loop: fig.dataset.loop === "1",
       tween: fig.dataset.tween === "1",
-      i: 0, speed: 1, timer: null, playing: false, touched: false
+      i: 0, speed: 1, timer: null, playing: false, touched: false, raf: 0, morphs: []
     };
     if (st.frames.length < 2 || !st.scrub) return;
     fig._anim = st;
@@ -79,6 +81,10 @@
   }
 
   function settle(st) {
+    if (st.raf) cancelAnimationFrame(st.raf);
+    st.raf = 0;
+    st.morphs.forEach(function (m) { m.el.setAttribute("d", m.to); });
+    st.morphs = [];
     if (st.fig.getAnimations) st.fig.getAnimations({ subtree: true }).forEach(function (a) { a.finish(); });
     st.fig.querySelectorAll(".is-out").forEach(function (el) { el.classList.remove("is-out"); });
     st.fig.querySelectorAll(".is-moved").forEach(function (el) { el.classList.remove("is-moved"); });
@@ -97,11 +103,13 @@
     return svg.getBoundingClientRect().width / svg.viewBox.baseVal.width || 1;
   }
 
+  var TAGS = "[data-k]:not([data-k^='link-'])";
+
   /* Tags of the next frame, each paired with where the same name sits in the current one. */
   function pairTags(A, B) {
-    var from = Array.prototype.slice.call(A.querySelectorAll("[data-k]"));
+    var from = Array.prototype.slice.call(A.querySelectorAll(TAGS));
     var out = [];
-    B.querySelectorAll("[data-k]").forEach(function (t) {
+    B.querySelectorAll(TAGS).forEach(function (t) {
       var want = names(t), src = null;
       for (var j = 0; j < from.length && !src; j++) {
         var have = names(from[j]);
@@ -117,6 +125,68 @@
     return out;
   }
 
+  /* List nodes that sit in a different slot in the next frame (same svg coordinates). */
+  function pairNodes(A, B) {
+    var out = [];
+    B.querySelectorAll("g[data-i][data-x]").forEach(function (b) {
+      var a = A.querySelector('g[data-i="' + b.getAttribute("data-i") + '"][data-x]');
+      if (!a) return;
+      var dx = parseFloat(a.getAttribute("data-x")) - parseFloat(b.getAttribute("data-x"));
+      var dy = parseFloat(a.getAttribute("data-y")) - parseFloat(b.getAttribute("data-y"));
+      if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) return;
+      out.push({ el: b, src: a, dx: dx, dy: dy });
+    });
+    return out;
+  }
+
+  var NUM = /-?\d*\.?\d+(?:e[-+]?\d+)?/gi;
+
+  /* Links keyed by source node whose path changed; morphable when the commands line up. */
+  function pairLinks(A, B) {
+    var out = [];
+    B.querySelectorAll("path[data-k^='link-']").forEach(function (b) {
+      var a = A.querySelector('path[data-k="' + b.getAttribute("data-k") + '"]');
+      if (!a) return;
+      var da = a.getAttribute("d"), db = b.getAttribute("d");
+      if (da === db) return;
+      var pa = da.split(NUM), pb = db.split(NUM);
+      if (pa.join("#") !== pb.join("#")) return;
+      out.push({ el: b, src: a, parts: pb, a: da.match(NUM).map(Number), b: db.match(NUM).map(Number),
+                 from: da, to: db });
+    });
+    return out;
+  }
+
+  function cubic(s, p1, p2) { return 3 * p1 * s * (1 - s) * (1 - s) + 3 * p2 * s * s * (1 - s) + s * s * s; }
+  function ease(t) {                       /* cubic-bezier(.45, 0, .2, 1), same curve as EASE */
+    var lo = 0, hi = 1, s = t;
+    for (var k = 0; k < 18; k++) {
+      var x = cubic(s, 0.45, 0.2);
+      if (Math.abs(x - t) < 1e-4) break;
+      if (x < t) lo = s; else hi = s;
+      s = (lo + hi) / 2;
+    }
+    return cubic(s, 0, 1);
+  }
+
+  function morph(st, list, dur) {
+    if (!list.length) return;
+    st.morphs = list;
+    var t0 = performance.now();
+    list.forEach(function (m) { m.el.setAttribute("d", m.from); });
+    function frame(now) {
+      var t = clamp((now - t0) / dur, 0, 1), e = ease(t);
+      list.forEach(function (m) {
+        var out = m.parts[0];
+        for (var j = 0; j < m.b.length; j++) out += (m.a[j] + (m.b[j] - m.a[j]) * e).toFixed(1) + m.parts[j + 1];
+        m.el.setAttribute("d", out);
+      });
+      if (t < 1) st.raf = requestAnimationFrame(frame);
+      else { st.raf = 0; st.morphs = []; }
+    }
+    st.raf = requestAnimationFrame(frame);
+  }
+
   function go(st, to, instant) {
     var n = st.frames.length;
     to = clamp(to, 0, n - 1);
@@ -127,7 +197,9 @@
     var motion = !instant && !reduce.matches && typeof A.animate === "function";
     var sa = A.querySelector(".viz-scroll"), sb = B.querySelector(".viz-scroll");
     if (sa && sb) sb.scrollLeft = sa.scrollLeft;
-    var moves = motion && st.tween && Math.abs(to - st.i) === 1 ? pairTags(A, B) : [];
+    var step = motion && st.tween && Math.abs(to - st.i) === 1;
+    var moves = step ? pairTags(A, B).concat(pairNodes(A, B)) : [];
+    var links = step ? pairLinks(A, B) : [];
 
     B.classList.add("is-on"); B.removeAttribute("aria-hidden");
     A.classList.remove("is-on"); A.setAttribute("aria-hidden", "true");
@@ -139,7 +211,7 @@
 
     var pace = st.ms / st.speed;
     var fade = clamp(pace * 0.35, 120, 360);
-    var move = clamp(pace * 0.5, 180, 620);
+    var move = clamp(pace * 0.5, 220, 760);
     A.classList.add("is-out");
     var out = A.animate([{ opacity: 1 }, { opacity: 0 }], { duration: fade, easing: "ease-out" });
     out.onfinish = function () { A.classList.remove("is-out"); };
@@ -148,6 +220,8 @@
       m.el.animate([{ transform: "translate(" + m.dx + "px," + m.dy + "px)" }, { transform: "translate(0,0)" }],
         { duration: move, easing: EASE });
     });
+    links.forEach(function (m) { m.src.classList.add("is-moved"); });
+    morph(st, links, move);
     if (cb) cb.animate([{ opacity: 0, transform: "translateY(3px)" }, { opacity: 1, transform: "none" }],
       { duration: clamp(fade, 120, 220), easing: "ease-out" });
   }

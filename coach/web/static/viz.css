@@ -80,6 +80,63 @@
 .viz-ll-ptr-name { fill: var(--hl-ink); font: 600 11px var(--f-code); }
 .viz-ll-ptr-line { fill: none; stroke: var(--hl-ink); stroke-width: 1.5; }
 .viz-ll-ptr-head { fill: var(--hl-ink); }
+.viz-ll-arc { fill: none; stroke: var(--text-3); stroke-width: 1.5; }
+/* a link that changed since the previous frame (or since "before") */
+.viz-ll-next.viz-ll-chg, .viz-ll-arc.viz-ll-chg, .viz-ll-loop.viz-ll-chg {
+  stroke: var(--viz-loop); stroke-width: 2.25; stroke-linecap: round;
+}
+.viz-ll-chg-head { fill: var(--viz-loop); }
+.viz-ll-node.viz-chg .viz-ll-box { stroke: var(--viz-loop); stroke-width: 2.25; }
+
+/* string: character cells, narrower than array cells; spaces drawn as a muted dot */
+.viz-str .viz-cell { min-width: 28px; padding: 0 4px; font-family: var(--f-code); font-size: 14px; }
+.viz-cell.viz-sp { color: var(--text-3); }
+.viz-cell.viz-chg { outline: 2px solid var(--viz-chg); outline-offset: -2px; position: relative; z-index: 2; }
+.viz { --viz-chg: var(--hl); }
+:root[data-theme="light"] .viz { --viz-chg: color-mix(in srgb, var(--hl) 45%, var(--hl-ink)); }
+
+/* graph */
+.viz-g-edge { fill: none; stroke: var(--text-3); stroke-width: 1.5; }
+.viz-g-edge.viz-hl { stroke: var(--viz-loop); stroke-width: 2.5; }
+.viz-g-head { fill: var(--text-3); }
+.viz-g-head-hl { fill: var(--viz-loop); }
+.viz-g-node { fill: var(--sunk); stroke: var(--line-2); stroke-width: 1.5; }
+.viz-g-val {
+  fill: var(--text); font: 500 12.5px var(--f-num); font-stretch: 87.5%;
+  font-variant-numeric: tabular-nums;
+}
+.viz-g-val.viz-g-sm { font-size: 9.5px; }
+.viz-g-g.viz-hl .viz-g-node { fill: var(--hl); stroke: var(--hl-strong); }
+.viz-g-g.viz-hl .viz-g-val { fill: var(--on-hl); font-weight: 600; }
+.viz-g-wbox { fill: var(--pane); stroke: var(--line-2); stroke-width: 1; }
+.viz-g-w { fill: var(--text-2); font: 500 10.5px var(--f-num); font-stretch: 87.5%; font-variant-numeric: tabular-nums; }
+.viz-g-wg.viz-hl .viz-g-wbox { stroke: var(--viz-loop); fill: color-mix(in srgb, var(--hl) 16%, var(--pane)); }
+.viz-g-wg.viz-hl .viz-g-w { fill: var(--hl-ink); font-weight: 600; }
+
+/* intervals: bars over a number line */
+.viz-iv-axis { stroke: var(--text-3); stroke-width: 1.5; }
+.viz-iv-tick { stroke: var(--text-3); stroke-width: 1; }
+.viz-iv-grid { stroke: var(--line); stroke-width: 1; stroke-dasharray: 2 3; }
+.viz-iv-num { fill: var(--text-3); font: 400 10.5px var(--f-num); font-stretch: 87.5%; font-variant-numeric: tabular-nums; }
+.viz-iv-bar { fill: var(--raised-2); stroke: var(--line-2); stroke-width: 1.25; }
+.viz-iv-txt { fill: var(--text); font: 500 11px var(--f-num); font-stretch: 87.5%; font-variant-numeric: tabular-nums; }
+.viz-iv-g.viz-hl .viz-iv-bar { fill: var(--hl); stroke: var(--hl-strong); }
+.viz-iv-g.viz-hl .viz-iv-txt { fill: var(--on-hl); font-weight: 600; }
+.viz-iv-merged { fill: none; stroke: var(--viz-loop); stroke-width: 2; }
+.viz-iv-g:has(.viz-iv-merged) .viz-iv-txt { fill: var(--hl-ink); font-weight: 600; }
+
+/* compare: before -> after side by side, stacked when the pane is narrow */
+.viz-compare { container-type: inline-size; }
+.msg-body.msg-viz:has(.viz-compare) { width: min(100%, 640px); }
+.viz-cmp-body { display: flex; align-items: center; gap: var(--s3); }
+.viz-cmp-side { flex: 0 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.viz-cmp-tag { font: 600 11px/1 var(--f-ui); color: var(--text-3); }
+.viz-cmp-arrow { flex: none; fill: none; stroke: var(--text-3); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+@container (max-width: 420px) {
+  .viz-cmp-body { flex-direction: column; align-items: flex-start; gap: var(--s2); }
+  .viz-cmp-side { max-width: 100%; }
+  .viz-cmp-arrow { transform: rotate(90deg); margin-left: 8px; }
+}
 
 /* list visuals stored before the svg drawing (old chat messages) */
 .viz-list { display: flex; align-items: flex-start; width: max-content; }
