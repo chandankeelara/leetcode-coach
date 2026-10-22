@@ -212,8 +212,9 @@ def test_statement_title_words_allowed(world):
     with pytest.raises(ValueError, match="stack"):
         service.set_statement(world, hid, "Reverse a linked list, maybe with a stack.")
     other = _handout_for(world, 8)
-    with pytest.raises(ValueError, match="linked list"):
-        service.set_statement(world, other, "Reverse a linked list.")
+    service.set_statement(world, other, "Reverse a linked list.")   # the input's structure: not a leak
+    with pytest.raises(ValueError, match="stack"):
+        service.set_statement(world, other, "Reverse a linked list with a stack.")
 
 
 # ---- accountability ------------------------------------------------------------------------
@@ -496,3 +497,15 @@ def test_statement_viz_leak_caption_rejected(world):
     with pytest.raises(ValueError, match="leak"):
         service.set_statement(world, hid, GOOD + "\n" + blk)
     assert service.get_statement(hid) is None
+
+
+def test_input_structure_words_are_not_leaks():
+    """Coach feedback 2026-10-22: a statement for 21 must be able to say 'linked lists'."""
+    from coach.db import session_scope
+    with session_scope() as s:
+        assert service.leak_words("You get the heads of two sorted linked lists.", "Merge Two Sorted Lists", s) == []
+        assert service.leak_words("Use a dummy node and two pointers.", "Merge Two Sorted Lists", s) == ["two pointers"]
+        rx = service._pattern_terms("linked-list", s)
+        text = "the heads of two sorted linked lists"
+        assert not any(r.search(text) for r in rx)
+        assert any(r.search("start from a dummy head") for r in rx)

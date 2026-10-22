@@ -420,7 +420,7 @@ def test_animate_rule_zero_on_frame_caption(hw):
     with db.session_scope() as s:
         s.add(Pattern(slug="linked-list", name="Linked List", tier=1))
         s.get(Handout, hid).pattern_slug = "linked-list"
-    spec = {"base": "list", "frames": [{"spec": {"values": [1, 2]}, "caption": "a linked list"},
+    spec = {"base": "list", "frames": [{"spec": {"values": [1, 2]}, "caption": "start from a dummy head"},
                                        {"spec": {"values": [1, 2]}, "caption": "b"}]}
     with pytest.raises(ValueError, match="leak"):
         service.show_visual(uid, hid, "animate", spec)

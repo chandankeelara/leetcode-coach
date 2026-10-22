@@ -502,8 +502,12 @@ _LEAK_SYNONYMS = [
     "two pointers?", "sliding window", "prefix sum", "hash map", "heap", "priority queue",
     "bfs", "dfs", "binary search", "monotonic", "deque", "stack", r"backtrack(?:ing)?",
     "dynamic programming", "dp", r"memo(?:ization|ize|ised|ized)?", "topological", "union find",
-    "dsu", "trie", "greedy", "linked list", "easy", "medium", "hard",
+    "dsu", "trie", "greedy", "easy", "medium", "hard",
 ]
+# The input's data structure is part of the problem, not a hint: a statement about merging two
+# sorted lists must say "linked list" (coach feedback 2026-10-22: set_statement refused "linked
+# lists" on 21). Techniques stay guarded; these structure words never count as a leak.
+_STRUCTURE_WORDS = {"linked list", "linked-list"}
 
 
 def _term_regex(words_or_regex, is_regex=False):
@@ -524,7 +528,7 @@ def _leak_terms(s):
     names -= {"intervals", "Intervals"}
     for n in names:
         key = re.sub(r"[\s\-_]+", " ", n.lower()).strip()
-        if key:
+        if key and key not in _STRUCTURE_WORDS:
             terms.setdefault(key, _term_regex(key))
     for syn in _LEAK_SYNONYMS:
         terms.setdefault(syn.replace("?", "").replace("(?:", "").replace(")", "").replace("|", "/"),
@@ -566,7 +570,7 @@ _PATTERN_SYNONYMS = {
     "graph-toposort": ["topological", "topo ?sort", "kahn", "in ?degrees?"],
     "binary-search-array": ["binary search", "bisect"],
     "binary-search-answer": ["binary search", "bisect", "search on the answer"],
-    "linked-list": ["linked lists?"],
+    "linked-list": ["dummy (?:head|node)s?", "sentinel nodes?", "fast and slow", "tortoise"],
     "heap": ["heaps?", "priority queues?", "heapq"],
     "intervals": ["sweep line", "merge intervals"],
     "monotonic-stack": ["monotonic", "stack"],
@@ -581,7 +585,7 @@ _PATTERN_SYNONYMS = {
     "bit-manipulation": ["bit manipulation", "xor", "bit ?masks?"],
 }
 # Pattern names that are ordinary words in statements: only their synonyms are checked.
-_DOMAIN_NAMES = {"intervals", "matrix", "graphs"}
+_DOMAIN_NAMES = {"intervals", "matrix", "graphs"} | _STRUCTURE_WORDS
 
 
 def _pattern_terms(slug, s):
