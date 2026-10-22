@@ -9,8 +9,9 @@ over a Handout row (no DB access); service.py does the writes.
 * approach -> code when the coach calls unlock_editor (lock_editor goes back to approach).
 * A reset zeroes every step and re-arms the per-step checkpoints.
 
-Budgets: the coach sets them at hand_out (phase_budget); the server clamps the total by
-difficulty and each step to >= 1 min. Default = difficulty base x rank factor (x 0.8 for a
+Budgets: the coach sets understand + approach at hand_out (phase_budget; a code value there is
+provisional) and the code step at unlock_editor (code_min, 2-40 min, coach/scoring.py). The
+server clamps the hand_out total by difficulty and each step to >= 1 min. Default = difficulty base x rank factor (x 0.8 for a
 problem he has attempted before), split 15 / 30 / 55 %.
 """
 from . import clock as clk
@@ -54,13 +55,19 @@ def check_total(difficulty, total):
 
 
 def parse_budget(raw):
-    """{understand, approach, code} ints >= 1 from a dict (or [u, a, c]). BudgetRefused if not."""
-    if isinstance(raw, (list, tuple)) and len(raw) == 3:
+    """{understand, approach[, code]} ints >= 1 from a dict (or [u, a] / [u, a, c]).
+    understand and approach are required; code is optional at hand_out (a provisional default:
+    the coach sets the real code budget at unlock_editor). BudgetRefused if not."""
+    if isinstance(raw, (list, tuple)) and len(raw) in (2, 3):
         raw = dict(zip(PHASES, raw))
-    if not isinstance(raw, dict) or set(raw) != set(PHASES):
-        raise BudgetRefused("phase_budget needs exactly understand, approach, code (minutes)")
+    if (not isinstance(raw, dict) or not {"understand", "approach"} <= set(raw)
+            or not set(raw) <= set(PHASES)):
+        raise BudgetRefused("phase_budget needs understand and approach (minutes); "
+                            "code is optional (set it at unlock_editor)")
     out = {}
     for k in PHASES:
+        if k not in raw:
+            continue
         v = raw[k]
         if isinstance(v, bool):
             raise BudgetRefused(f"phase_budget.{k} must be whole minutes")

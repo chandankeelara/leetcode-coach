@@ -46,6 +46,14 @@ def events(uid, kind):
                 .order_by(Event.id)]
 
 
+def parts(understand=1, approach=1, first_submit=1, quality=1, time=1, deduction=0):
+    v = dict(understand=understand, approach=approach, first_submit=first_submit,
+             quality=quality, time=time)
+    out = {k: {"score": x, "why": f"{k} reason"} for k, x in v.items()}
+    out["hints"] = {"deduction": deduction, "why": "no hints" if not deduction else "one hint"}
+    return out
+
+
 def handout(hid):
     with db.session_scope() as s:
         h = s.get(Handout, hid)
@@ -89,7 +97,8 @@ def test_hand_out_coach_budget_and_reason(world):
     ("E", {"understand": 5, "approach": 8, "code": 10}, "outside 5-20"),
     ("M", {"understand": 1, "approach": 2, "code": 4}, "outside 8-35"),
     ("M", {"understand": 0, "approach": 5, "code": 8}, "at least 1"),
-    ("M", {"understand": 2, "approach": 5}, "exactly understand"),
+    ("M", {"approach": 5}, "needs understand and approach"),
+    ("M", {"understand": 2, "approach": 5, "debug": 3}, "needs understand and approach"),
     ("M", {"understand": 2, "approach": 5.5, "code": 8}, "whole minutes"),
 ])
 def test_clamp_refusals(world, d, budget, msg):
@@ -290,6 +299,7 @@ def test_mmr_uses_the_problem_rating(world):
     h = service.hand_out(world, n, today=TODAY)
     r = service.log_attempt(world, handout_id=h.handout_id, bugs=0, hints=0, optimal=True,
                             derived_cold=True, day=TODAY)
+    service.score_attempt(world, h.handout_id, parts())
     with db.session_scope() as s:
         ev = s.query(RatingEvent).filter_by(attempt_id=r["attempt_id"]).one()
         assert ev.problem_rating == 1900
@@ -378,7 +388,12 @@ def test_idempotent_per_attempt(world):
                              derived_cold=True)
     r2 = service.log_attempt(world, handout_id=h.handout_id, bugs=3, hints=0, optimal=True,
                              derived_cold=True)
-    assert r2["already_logged"]
+    assert r2["already_logged"] and r1["score_pending"] and "rating" not in r1
+    with db.session_scope() as s:
+        assert s.query(RatingEvent).count() == 0            # the coach has not scored it
+    service.score_attempt(world, h.handout_id, parts())
+    with pytest.raises(service.ScoreRefused, match="already scored"):
+        service.score_attempt(world, h.handout_id, parts(time=0))
     with db.session_scope() as s:
         assert s.query(RatingEvent).count() == 1
         a = s.get(Attempt, r1["attempt_id"])
@@ -398,19 +413,23 @@ def test_live_inputs_first_judged_submission_and_lint(world):
                          verdict="Accepted"))
     r = service.log_attempt(world, handout_id=h.handout_id, bugs=1, hints=0, optimal=True,
                             derived_cold=True)
+    with db.session_scope() as s:                        # the formula still reads live data
+        rating.apply(s, s.get(Attempt, r["attempt_id"]))
     rv = service.reveal(h.handout_id)
+    assert rv["rating"]["scored_by"] == "formula"
     parts = rv["rating"]["breakdown"]["parts"]
     assert parts["first_ac"] == {"weight": 0.3, "score": 0.0, "points": 0.0, "from": "judge"}
     assert parts["quality"]["from"] == "lint" and parts["quality"]["score"] == 1.0
     assert parts["understand"]["from"] == "step" and parts["approach"]["from"] == "step"
     assert [x["phase"] for x in rv["steps"]] == ["understand", "approach", "code"]
-    assert rv["rating"]["before"] == 1200 and r["rating"]["after"] == rv["rating"]["after"]
+    assert rv["rating"]["before"] == 1200
 
 
 def test_abandoned_scores_zero(world):
     h = give(world)
     service.log_attempt(world, handout_id=h.handout_id, bugs=0, hints=0, optimal=True,
                         derived_cold=True, abandoned=True)
+    service.score_attempt(world, h.handout_id, parts())
     rt = service.reveal(h.handout_id)["rating"]
     assert rt["actual"] == 0 and rt["delta"] < 0 and rt["breakdown"]["abandoned"]
 
@@ -421,6 +440,7 @@ def test_rank_up_moment(world):
     h = give(world)
     service.log_attempt(world, handout_id=h.handout_id, bugs=0, hints=0, optimal=True,
                         derived_cold=True)
+    service.score_attempt(world, h.handout_id, parts())
     rt = service.reveal(h.handout_id)["rating"]
     assert rt["rank_before"] == "Silver" and rt["rank"] == "Gold" and rt["rank_up"]
 
@@ -585,8 +605,13 @@ def test_reveal_and_dashboard_show_rating(web):
     service.understood(uid, h.handout_id)
     service.log_attempt(uid, handout_id=h.handout_id, bugs=0, hints=0, optimal=True,
                         derived_cold=True)
+    pending = c.get(f"/reveal/{h.handout_id}").text
+    assert 'id="rv-rating-pending"' in pending and 'id="rv-rating"' not in pending
+    service.score_attempt(uid, h.handout_id, parts(first_submit=0), summary="solid idea")
     page = c.get(f"/reveal/{h.handout_id}").text
-    assert 'id="rv-rating"' in page and "1200" in page and "First submit accepted" in page
+    assert 'id="rv-rating"' in page and "1200" in page and "First submit" in page
+    assert "scored by your coach" in page and "first_submit reason" in page
+    assert "solid idea" in page
     assert "Expected" in page and "Understand the question" in page
     assert "more approach time at level 2" in page
     dash = c.get("/dashboard").text

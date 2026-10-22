@@ -8,7 +8,11 @@ Problem rating: problems.rating when the coach rated it (rate_problem, fixed onc
 default of its label (E 1000 / M 1400 / H 1800). Bands a rating must fall in: E 800-1300,
 M 1200-1900, H 1700-2600. No crowd adjustment.
 
-actual (0..1) = sum of weighted parts, minus 0.1 per hint (at most 0.3), floor 0; abandoned = 0:
+LIVE attempts (with a handout) are scored by the COACH after logging (score_attempt ->
+apply_coach): each part 0..1 with one reason, same weights, minus a hints deduction 0..0.3.
+The formula below rates only placement replay and attempts logged without a handout.
+
+formula actual (0..1) = sum of weighted parts, minus 0.1 per hint (at most 0.3), floor 0; abandoned = 0:
     understand  0.10  understand step within its budget (live: time up to his button press)
     approach    0.25  his own approach (derived_cold) AND the approach step within budget,
                       linear to 0 at 2x budget
@@ -172,21 +176,32 @@ def get_or_create(s, user_id):
 
 
 def apply(s, att, replayed=False):
-    """Rate one attempt (once: an existing rating_events row comes back unchanged).
-    Returns the RatingEvent."""
-    from .models import Problem, RatingEvent
-    ev = s.scalars(select(RatingEvent).where(RatingEvent.attempt_id == att.id)).first()
+    """Rate one attempt by the FORMULA (once: an existing rating_events row comes back
+    unchanged). Used for placement replay and for attempts logged without a handout (imports);
+    a live handout attempt is scored by the coach instead (apply_coach). Returns the RatingEvent."""
+    ev = event_for(s, att.id)
     if ev is not None:
         return ev
-    r = get_or_create(s, att.user_id)
-    p = s.get(Problem, att.problem_number)
-    pr = problem_rating(p)
     if replayed:
         actual, bd = score(att)
         bd["replayed"] = True
     else:
         steps, first, hits = _live_inputs(s, att)
         actual, bd = score(att, steps, first, hits)
+    bd["scored_by"] = "formula"
+    return _commit(s, att, actual, bd)
+
+
+def event_for(s, attempt_id):
+    from .models import RatingEvent
+    return s.scalars(select(RatingEvent).where(RatingEvent.attempt_id == attempt_id)).first()
+
+
+def _commit(s, att, actual, bd):
+    """Expected vs the problem's rating, K, the delta; writes the rating_events row."""
+    from .models import Problem, RatingEvent
+    r = get_or_create(s, att.user_id)
+    pr = problem_rating(s.get(Problem, att.problem_number))
     e = expected(r.mmr, pr)
     k = k_factor(r.games)
     delta = k * (actual - e)
@@ -201,6 +216,83 @@ def apply(s, att, replayed=False):
     s.add(ev)
     s.flush()
     return ev
+
+
+# ---- the coach's score (score_attempt) ----------------------------------------------------
+# The coach scores each part 0..1 with one plain reason; same weights as the formula, with
+# first_submit in place of first_ac. hints: a deduction 0..0.3.
+COACH_PARTS = ("understand", "approach", "first_submit", "quality", "time")
+COACH_WEIGHTS = {"understand": 0.10, "approach": 0.25, "first_submit": 0.30, "quality": 0.15,
+                 "time": 0.20}
+WHY_MAX = 200
+
+
+def _unit(v, name, hi=1.0):
+    if isinstance(v, bool):
+        raise RatingRefused(f"{name} must be a number 0-{hi:g}")
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        raise RatingRefused(f"{name} must be a number 0-{hi:g}") from None
+    if not 0.0 <= f <= hi:
+        raise RatingRefused(f"{name} must be 0-{hi:g}, got {f:g}")
+    return f
+
+
+def _why(v, name):
+    w = " ".join(str(v or "").split())
+    if not w:
+        raise RatingRefused(f"{name}.why: one plain line")
+    if len(w) > WHY_MAX:
+        raise RatingRefused(f"{name}.why: at most {WHY_MAX} characters")
+    return w
+
+
+def coach_score(parts, abandoned=False):
+    """(actual, breakdown) from the coach's parts:
+    {understand|approach|first_submit|quality|time: {score 0-1, why}, hints: {deduction 0-0.3,
+    why}}. actual = weighted sum - deduction, floor 0 (0 when abandoned). RatingRefused on a
+    missing / extra part, a value out of range, or a why missing or over 200 characters."""
+    if not isinstance(parts, dict):
+        raise RatingRefused("parts must be an object")
+    want = set(COACH_PARTS) | {"hints"}
+    if set(parts) != want:
+        miss, extra = sorted(want - set(parts)), sorted(set(parts) - want)
+        raise RatingRefused("parts needs exactly " + ", ".join(COACH_PARTS) + ", hints"
+                            + (f" (missing {', '.join(miss)})" if miss else "")
+                            + (f" (unknown {', '.join(extra)})" if extra else ""))
+    out = {}
+    for k in COACH_PARTS:
+        p = parts[k]
+        if not isinstance(p, dict):
+            raise RatingRefused(f"{k}: {{score, why}}")
+        sc = _unit(p.get("score"), f"{k}.score")
+        out[k] = {"weight": COACH_WEIGHTS[k], "score": round(sc, 3),
+                  "points": round(COACH_WEIGHTS[k] * sc, 3), "why": _why(p.get("why"), k)}
+    hp = parts["hints"]
+    if not isinstance(hp, dict):
+        raise RatingRefused("hints: {deduction, why}")
+    ded = _unit(hp.get("deduction"), "hints.deduction", HINT_MAX)
+    raw = sum(v["points"] for v in out.values())
+    actual = 0.0 if abandoned else max(0.0, raw - ded)
+    return actual, {"parts": out, "hints": {"deduction": round(ded, 3),
+                                            "why": _why(hp.get("why"), "hints")},
+                    "raw": round(raw, 3), "hint_penalty": round(ded, 3),
+                    "abandoned": bool(abandoned), "actual": round(actual, 3),
+                    "scored_by": "coach"}
+
+
+def apply_coach(s, att, parts, summary=""):
+    """Rate a logged attempt from the coach's parts. Once: RatingRefused if it already has a
+    rating event. Returns the RatingEvent."""
+    if event_for(s, att.id) is not None:
+        raise RatingRefused("this attempt is already scored; a score is final")
+    actual, bd = coach_score(parts, abandoned=att.outcome == "abandoned")
+    summ = " ".join(str(summary or "").split())
+    if len(summ) > WHY_MAX:
+        raise RatingRefused(f"summary: at most {WHY_MAX} characters")
+    bd["summary"] = summ
+    return _commit(s, att, actual, bd)
 
 
 def ensure(s, user_id, exclude_attempt_id=None):
@@ -240,6 +332,8 @@ def event_dict(ev, s=None):
             "rank_up": order.index(after_rank) > order.index(before_rank),
             "rank_down": order.index(after_rank) < order.index(before_rank),
             "replayed": bool((ev.breakdown or {}).get("replayed")),
+            "scored_by": (ev.breakdown or {}).get("scored_by") or "formula",
+            "summary": (ev.breakdown or {}).get("summary") or None,
             "at": ev.created_at.isoformat() if ev.created_at else None}
 
 

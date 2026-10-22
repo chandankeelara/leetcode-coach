@@ -169,11 +169,17 @@ def get_profile(user_id, today=None):
                 "next_rank_at": rb["next_rank_at"], "recent_deltas": rb["recent_deltas"],
                 "default_budget": {d: stp.split(stp.default_total(d, rb["rank"], False))
                                    for d in "EMH"},
+                "code_speed": _code_speed(s, user_id),
                 "plan": plan_dict(c.plan, today) if c.plan else None,
                 "ledger": ledger, "patterns": patterns, "recent_attempts": recent,
                 "backlog": bl, "streak": rules.streak(c.atts, today),
                 "clean_rate": rules.tier_progress(c.atts, today, c.cfg["clean_to_own"])
                 .get("clean_rate")}
+
+
+def _code_speed(s, user_id):
+    from .scoring import code_speed
+    return code_speed(s, user_id)
 
 
 def per_day(c):
@@ -303,8 +309,10 @@ def hand_out(user_id, number, target_min=None, mode="coached", why="", today=Non
     pick_reason (private until logged), emits `handout`. Returns the public Handoff (9 keys).
 
     Time budget (coach/steps.py): every coach handout has steps understand -> approach -> code.
-      phase_budget {understand, approach, code} minutes: target = their sum (target_min, if
-        also given, must equal it). Each step >= 1 min.
+      phase_budget {understand, approach[, code]} minutes: target = their sum (target_min, if
+        also given, must equal it). Each step >= 1 min. code left out: provisional = the
+        default total (or target_min) minus the two, kept inside the range; the coach sets
+        the real one at unlock_editor(code_min).
       only target_min: split 15 / 30 / 55 %.
       neither: the default, difficulty base (E10 / M15 / H35) x his rank factor (Bronze 1.3,
         Silver 1.15, Gold 1.0, Platinum 0.85, Diamond 0.75), x 0.8 if he attempted it before.
@@ -354,6 +362,16 @@ def _budget(s, c, user_id, p, target_min, phase_budget):
     try:
         if phase_budget is not None:
             b = stp.parse_budget(phase_budget)
+            if "code" not in b:           # provisional: the coach sets it at unlock_editor
+                if target_min is not None:
+                    dflt = target_min
+                else:
+                    rk = rating.rank(rating.ensure(s, user_id).mmr)
+                    dflt = stp.default_total(d, rk, p.number in c.attempts_by_problem)
+                lo, hi = stp.TOTAL_RANGE.get(d, stp.TOTAL_RANGE["M"])
+                code = max(1, dflt - b["understand"] - b["approach"])
+                total = min(hi, max(lo, b["understand"] + b["approach"] + code))
+                b["code"] = max(1, total - b["understand"] - b["approach"])
             total = sum(b.values())
             if target_min is not None and target_min != total:
                 raise stp.BudgetRefused(f"target_min {target_min} differs from the phase_budget "

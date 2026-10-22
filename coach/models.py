@@ -118,6 +118,9 @@ class Handout(Base):
     phase_fired: Mapped[list | None] = mapped_column(JSON, nullable=True)   # steps past budget
     budget_reason: Mapped[str | None] = mapped_column(Text, nullable=True)   # private until logged
     idle_mark: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # idle fired for
+    # Code budget set at unlock_editor (coach/scoring.py): the coach's private one-line reason
+    # for phase_budget.code, shown on reveal.
+    code_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class Attempt(Base):

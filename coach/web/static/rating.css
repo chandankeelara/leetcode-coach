@@ -108,3 +108,9 @@
   .fb-table td { border: 0; padding: 0; }
   .fb-title { grid-column: 1 / -1; }
 }
+
+/* coach-scored parts (coach/scoring.py): one reason under each part */
+.parts .part-why { display: block; margin-top: 2px; color: var(--text-3); font-size: var(--t-xs, 0.8em); line-height: 1.35; }
+.parts-coach td:first-child { max-width: 0; width: 60%; }
+.rv-scored-by { margin: 0 0 6px; }
+.rv-score-summary { margin: 0 0 10px; color: var(--text-2); }

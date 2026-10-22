@@ -915,12 +915,16 @@ def _log_attempt(user_id, handout_id=None, number=None, actual_min=None, bugs=0,
             action = "added"
 
         _update_pattern_state(s, user_id, prob.pattern_slug, h, day)
-        ev = rating.apply(s, att)
-        r = rating.event_dict(ev)
-        return {"attempt_id": att.id, "outcome": result, "retry": action,
-                "problem_number": number, "actual_min": actual_min, "wall_min": wall_min,
-                "clock_note": clock_note,
-                "rating": {k: r[k] for k in ("before", "after", "delta", "rank", "rank_up")}}
+        out = {"attempt_id": att.id, "outcome": result, "retry": action,
+               "problem_number": number, "actual_min": actual_min, "wall_min": wall_min,
+               "clock_note": clock_note}
+        if h is not None:
+            # the coach scores a live attempt (score_attempt, coach/scoring.py): no rating yet
+            out["score_pending"] = True
+            return out
+        r = rating.event_dict(rating.apply(s, att))      # no handout (import): the formula
+        out["rating"] = {k: r[k] for k in ("before", "after", "delta", "rank", "rank_up")}
+        return out
 
 
 def _update_pattern_state(s, user_id, slug, handout, day):
@@ -1036,6 +1040,9 @@ def reveal(handout_id):
         if ev is not None:
             nxt = rating.next_rank_at(ev.after)
             out["rating"]["next_rank_at"] = nxt
+        # coach scoring (coach/scoring.py): pending until the coach calls score_attempt
+        out["score_pending"] = a is not None and ev is None
+        out["code_reason"] = h.code_reason
         return out
 
 
@@ -1362,7 +1369,9 @@ def session_summary(user_id, today=None):
         submissions: {total, not_accepted (judged wrong: count each as a bug), verdicts},
         clock: {coach_min, wall_min, pauses: [{reason, minutes, at}], resets: [{reason, at}]}}],
         "attempts_without_handout": [...], "skill_changes": [{name, level, evidence}],
-        "retry": {"added", "cleared", "bumped"}, "trap_recall": [...]}"""
+        "retry": {"added", "cleared", "bumped"}, "trap_recall": [...],
+        "pending_scores": [{handout_id, attempt_id, number, title, day}] (logged, not yet
+        scored by the coach: score each with score_attempt)}"""
     day = _today(today)
     start = datetime.combine(day, datetime.min.time())
     end = start + timedelta(days=1)
@@ -1423,7 +1432,9 @@ def session_summary(user_id, today=None):
                 retry["bumped"].append(row)
         traps = [_trap_row(r) for r in s.scalars(select(TrapRecall).where(
             TrapRecall.user_id == user_id, TrapRecall.day == day).order_by(TrapRecall.id))]
+        from .scoring import pending_scores
         return {"today": day.isoformat(), "session_id": sess.id if sess else None,
+                "pending_scores": pending_scores(s, user_id),
                 "problems": problems, "attempts_without_handout": loose,
                 "skill_changes": skill_changes, "retry": retry, "trap_recall": traps}
 
@@ -1454,3 +1465,7 @@ from .picks import (PickRefused, find_problems, get_due, get_profile, hand_out, 
 from .picks import rate_problem  # noqa: E402
 from .feedback import (is_admin, list_requests, record_friction,  # noqa: E402
                        request_feature, set_status as set_request_status)
+
+
+# ---- coach scoring and the code budget at unlock (coach/scoring.py) --------------------------
+from .scoring import ScoreRefused, score_attempt, unlock_with_budget  # noqa: E402

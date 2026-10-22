@@ -229,7 +229,7 @@ def next_problem(ctx, new: bool = False) -> dict:
 
 @tool
 def get_profile(ctx) -> dict:
-    """His plan (phase, focus, target date, when Hards open), skill ledger, per-pattern record (clean, attempts, owned, last attempt, retired), last 20 attempts, backlog, streak, clean rate. For choosing the next problem. Never quote it to him before a handoff."""
+    """His plan (phase, focus, target date, when Hards open), skill ledger, per-pattern record (clean, attempts, owned, last attempt, retired), last 20 attempts, backlog, streak, clean rate. code_speed {seconds_per_line (null under 3 samples), samples, recent} for the code budget. For choosing the next problem. Never quote it to him before a handoff."""
     return _jsonable(ctx.svc.get_profile(ctx.user_id))
 
 
@@ -255,7 +255,7 @@ def find_problems(ctx, pattern: str | None = None, tier: int | None = None,
 @tool
 def hand_out(ctx, number: int, target_min: int | None = None, mode: str = "coached",
              why: str = "", phase_budget: dict | None = None, budget_reason: str = "") -> dict:
-    """Hand out the problem YOU chose. The server checks the hard rules and refuses with {error} (touched in the last 7 days, retired, not allowed yet by the plan, burned this session, another problem open). why: one plain line, kept private until he logs. mode: timed | coached. phase_budget: {understand, approach, code} minutes, each >= 1; the target is their sum and must fit the server's range for the problem (refused otherwise). Left out: the server default for his rank (get_profile.default_budget). budget_reason: one private line, shown after he logs. Posts the handoff to the chat panel itself and returns its fields. Say nothing else alongside it."""
+    """Hand out the problem YOU chose. The server checks the hard rules and refuses with {error} (touched in the last 7 days, retired, not allowed yet by the plan, burned this session, another problem open). why: one plain line, kept private until he logs. mode: timed | coached. phase_budget: {understand, approach} minutes, each >= 1 (a code value here is only provisional: set the code budget at unlock_editor); the target is their sum and must fit the server's range for the problem (refused otherwise). Left out: the server default for his rank (get_profile.default_budget). budget_reason: one private line, shown after he logs. Posts the handoff to the chat panel itself and returns its fields. Say nothing else alongside it."""
     try:
         if phase_budget is None and not budget_reason:
             raw = ctx.svc.hand_out(ctx.user_id, number, target_min=target_min, mode=mode,
@@ -340,11 +340,22 @@ def show_visual(ctx, kind: str, spec: dict) -> dict:
 
 
 @tool
-def unlock_editor(ctx, stub: str | None = None) -> dict:
-    """Open the code editor on his page. Only after the idea holds. Optional stub: LeetCode's starter signature only, loaded if his editor is empty."""
+def unlock_editor(ctx, stub: str | None = None, code_min: int | None = None,
+                  code_reason: str = "") -> dict:
+    """Open the code editor on his page. Only after the idea holds. Optional stub: LeetCode's starter signature only, loaded if his editor is empty. code_min: the code-step budget in minutes (2-40, refused outside), set from the approach he will code; the total target becomes the sum of the steps. Left out: the hand_out budget stays. code_reason: one private line, shown after he logs."""
     hid = _open_handout(ctx)
     if hid is None:
         return {"error": "no open problem"}
+    if code_min is not None or code_reason:
+        f = getattr(ctx.svc, "unlock_with_budget", None)
+        if f is None:
+            return {"error": "not supported"}
+        try:
+            r = _jsonable(f(ctx.user_id, hid, stub=stub, code_min=code_min,
+                            code_reason=code_reason))
+        except ValueError as e:
+            return {"error": str(e)}
+        return {"error": r["error"]} if not r.get("ok") and r.get("error") else r
     if stub:
         r = ctx.svc.unlock_editor(ctx.user_id, hid, stub=stub)
         return {"error": r["error"]} if not r.get("ok") and r.get("error") else r
@@ -477,7 +488,7 @@ def log_attempt(ctx, handout_id: int, bugs: int, hints: int, optimal: bool, deri
                 notes: str = "", abandoned: bool = False, actual_min: int | None = None) -> dict:
     """Record the attempt. actual_min defaults to the minutes on your clock (pauses excluded);
     pass it only if the clock was broken. Returns outcome, retry-queue action, actual_min,
-    wall_min and clock_note. A handout already logged is not logged again: you get the
+    wall_min, clock_note and score_pending: true (score it next with score_attempt). A handout already logged is not logged again: you get the
     existing attempt with already_logged true."""
     kw = {}
     if actual_min is not None:
@@ -496,9 +507,25 @@ def log_attempt(ctx, handout_id: int, bugs: int, hints: int, optimal: bool, deri
 
 
 @tool
+def score_attempt(ctx, handout_id: int, parts: dict, summary: str = "") -> dict:
+    """Score his solve, ONCE, after log_attempt (and reveal). parts: {understand, approach, first_submit, quality, time: {score 0-1, why}, hints: {deduction 0-0.3, why}}. Weights 0.10 / 0.25 / 0.30 / 0.15 / 0.20; actual = weighted sum - hints deduction, floor 0 (0 if abandoned). Each why: one plain line, at most 200 characters, no code, no names; shown on his reveal page. summary: one line. The server rates it against the problem (expected, K) and moves his MMR. A second call is refused. Returns actual, expected, delta, before, after, rank, rank_up."""
+    f = getattr(ctx.svc, "score_attempt", None)
+    if f is None:
+        return {"error": "not supported"}
+    owner = _handout_owner(handout_id)
+    if owner is not None and owner != ctx.user_id:
+        return {"error": f"no handout {handout_id}"}
+    try:
+        return _jsonable(f(ctx.user_id, handout_id, parts, summary))
+    except ValueError as e:
+        return {"error": str(e)}
+
+
+@tool
 def reveal(ctx, handout_id: int) -> dict:
     """What the problem was testing. Refused until the attempt is logged. After a re-fire it
-    also carries trap_quiz {pattern, cues: [{cue, trap}]} for the spoken trap quiz."""
+    also carries trap_quiz {pattern, cues: [{cue, trap}]} for the spoken trap quiz.
+    score_pending true until you score_attempt; rating then carries your parts and reasons."""
     owner = _handout_owner(handout_id)
     if owner is not None and owner != ctx.user_id:
         return {"error": f"no handout {handout_id}"}
@@ -570,7 +597,7 @@ def write_session_log(ctx, markdown: str) -> dict:
 @tool
 def session_summary(ctx) -> dict:
     """Today's handouts, attempts, reveals, ledger, queue and trap-quiz changes, for writing the
-    session log. Progress talk: session end only, never while a problem is open."""
+    session log. pending_scores: logged attempts you have not scored yet: score_attempt each. Progress talk: session end only, never while a problem is open."""
     return _jsonable(ctx.svc.session_summary(ctx.user_id))
 
 
