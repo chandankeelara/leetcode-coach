@@ -267,7 +267,7 @@ def set_statement(ctx, handout_id: int, text: str) -> dict:
 
 @tool
 def show_visual(ctx, kind: str, spec: dict) -> dict:
-    """Draw something into his discussion thread, as your message: array | grid | list | tree | steps | io | html. Captions go through the leak guard."""
+    """Draw something into his discussion thread, as your message: array | grid | list | tree | steps | io | html | animate. animate spec: {base: array|list|tree|grid|steps, frames: [{spec: <a full spec of base>, caption}], loop: false, ms: 1200}, 2-40 frames, played in place with a player. Captions go through the leak guard."""
     hid = _open_handout(ctx)
     if hid is None:
         return {"error": "no open problem"}

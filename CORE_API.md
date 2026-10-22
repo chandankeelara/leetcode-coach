@@ -187,7 +187,9 @@ get_statement(handout_id: int) -> str | None
 
 # visuals: coach-drawn illustrations under the statement (coach/viz.py renders)
 show_visual(user_id, handout_id, kind: str, spec: dict) -> dict   # {"id", "html"}
-#   kind: array | grid | list | tree | steps | io | html (spec schema: viz.py / SKILL.md).
+#   kind: array | grid | list | tree | steps | io | html | animate (spec schema: viz.py / SKILL.md).
+#   animate: {base: array|list|tree|grid|steps, frames: [{spec, caption}] (2-40), loop, ms
+#   (300-6000, default 1200)}; every frame spec is validated and leak-checked like a still.
 #   LEAK GUARD on every text in the spec (caption, labels, pointer names, columns, cells, io
 #   strings, html text content) via leak_words + the problem title: ValueError("leak: ...")
 #   and nothing stored or posted. Bad kind/spec: ValueError. On success it stores a `visuals`

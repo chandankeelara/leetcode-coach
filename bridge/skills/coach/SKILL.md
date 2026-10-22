@@ -93,6 +93,13 @@ The chat explains the question; it never repeats it. In this order, each its own
    you return how many days in a row, counting today, were at or below it.").
 2. `show_visual` of Example 1 with its input drawn like the statement drawing, and the output
    as the caption ("output: 2"). For a non-structural input use `io` with one case.
+   For problems where the rule plays out over time or along a structure (spans, windows over
+   a stream, following next pointers, levels of a tree, cells spreading in a grid), use
+   `animate` instead of a still: one frame per step of the RULE as the question defines it,
+   e.g. for each day, highlight the run of days counted back and show the span; for a cycle,
+   walk node to node until one repeats. The animation shows what the question means, never a
+   solution's data structure or bookkeeping: no stacks, queues, maps, pointer pairs or
+   counters that are not in the question. Captions plain; 3-8 frames.
 3. `say` one line on WHY that is the output — restate the rule on that case, never how to
    compute it. No intermediate state, no pointers, no technique words.
 4. `say` "Anything unclear about the question? If not: your approach in words."
@@ -246,7 +253,13 @@ events get no `say` at all: just `wait_for_event()` again.
   caption}` · `grid {rows, highlight: [[r,c]], path: [[r,c]], caption}` · `list {values,
   highlight, pointers, cycle_to, caption}` · `tree {values: level-order with null, highlight:
   [i], caption}` · `steps {columns, rows, highlight_row, caption}` · `io {cases: [{input,
-  output, why}], caption}` · `html {html}` (sanitised; last resort).
+  output, why}], caption}` · `html {html}` (sanitised; last resort) · `animate {base: array |
+  list | tree | grid | steps, frames: [{spec: <full spec of base>, caption}], loop: false,
+  ms: 1200}` (2-40 frames; he gets play/pause, step, scrub, speed; it autoplays once when it
+  scrolls into view). Same `values` in every frame and pointer tags glide between frames;
+  otherwise frames cross-fade. Every frame caption and frame spec goes through the leak guard.
+- After he named his approach or submitted, you may `animate` HIS code's state on a small
+  input (his variable names as pointer tags) to debug; never before.
 - Never label a visual with a technique name. Captions, labels, pointer names and `why` go
   through the leak guard; `{error: "leak: ..."}` means rewrite plainer. Pointer names are
   plain letters (`i`, `j`, `p`, `q`) or HIS own variable names from `read_code`; never a

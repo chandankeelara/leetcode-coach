@@ -320,3 +320,131 @@ def test_cleared_visual_becomes_muted_line(thread):
     html = c.get("/messages?since=0").text
     assert 'data-cleared="1"' in html and "Illustration cleared." in html
     assert "viz-io" not in html
+
+
+# ---- animate --------------------------------------------------------------------------------
+SPAN = [100, 80, 60, 70, 60, 75, 85]
+SPAN_RUNS = [(0, 0), (1, 1), (2, 2), (2, 3), (4, 4), (2, 5), (1, 6)]
+
+
+def _span_anim():
+    return {"base": "array", "ms": 900, "frames": [
+        {"spec": {"values": SPAN, "highlight": [[a, b]], "pointers": {"day": b}},
+         "caption": f"day {b + 1}: {SPAN[b]} → span {b - a + 1}"} for a, b in SPAN_RUNS]}
+
+
+def test_animate_renders_every_frame_one_visible_with_player():
+    out = viz.render("animate", _span_anim())
+    assert out.count('class="viz-frame') == 7
+    assert out.count('class="viz-frame is-on"') == 1 and out.count('aria-hidden="true"') >= 12
+    assert out.count("<p class=\"viz-anim-cap") == 7 and "day 6: 75 → span 4" in out
+    for bit in ('data-act="play"', 'data-act="prev"', 'data-act="next"', 'data-act="speed"',
+                'type="range" class="viz-anim-scrub" min="0" max="6"', 'tabindex="0"',
+                'data-ms="900"', 'data-loop="0"', 'data-tween="1"'):
+        assert bit in out, bit
+    assert out.count('data-k="day"') == 7                         # one stable key per frame
+    assert re.findall(r'class="viz-col[^"]*" data-i="(\d+)"', out)[:7] == [str(i) for i in range(7)]
+
+
+def test_animate_list_keys_and_same_frame_size():
+    spec = {"base": "list", "loop": True, "frames": [
+        {"spec": {"values": [3, 2, 0, -4], "cycle_to": 1, "pointers": {"at": k} if k else {}},
+         "caption": f"step {k}"} for k in (0, 1, 2, 3, 1)]}
+    out = viz.render("animate", spec)
+    assert out.count('class="viz-ll-ptr" data-k="at"') == 4 and 'data-loop="1"' in out
+    sizes = set(re.findall(r'<svg class="viz-svg viz-ll" width="(\d+)" height="(\d+)"', out))
+    assert len(sizes) == 1                                         # nothing jumps between frames
+    assert len(re.findall(r'class="viz-ll-node[^"]*" data-i="3"', out)) == 5
+
+
+def test_animate_other_bases_cross_fade():
+    out = viz.render("animate", {"base": "tree", "frames": [
+        {"spec": {"values": [1, 2, 3], "highlight": [0]}}, {"spec": {"values": [1, 2, 3, 4]}}]})
+    assert 'data-tween="0"' in out and out.count("viz-tree-fig") == 2
+    out = viz.render("animate", {"base": "steps", "frames": [
+        {"spec": {"columns": ["day"], "rows": [[1]], "caption": "inner"}},
+        {"spec": {"columns": ["day"], "rows": [[1], [2]]}, "caption": "outer"}]})
+    assert '<p class="viz-anim-cap is-on" data-f="0">inner</p>' in out and "outer" in out
+    assert "viz-cap" not in out.split("viz-anim-caps")[0]          # inner caption moved out
+
+
+@pytest.mark.parametrize("spec,msg", [
+    ({"base": "pie", "frames": []}, "base"),
+    ({"base": "animate", "frames": []}, "base"),
+    ({"base": "array", "frames": [{"spec": {"values": [1]}}]}, "at least"),
+    ({"base": "array", "frames": [{"spec": {"values": [1]}}] * 41}, "at most 40"),
+    ({"base": "array", "frames": [{"spec": {"values": [1]}}, {"spec": {"values": "x"}}]},
+     "frame 2"),
+    ({"base": "grid", "frames": [{"spec": {"rows": [[1]]}}, {"spec": {"rows": [[1] * 50]}}]},
+     "frame 2"),
+    ({"base": "array", "frames": [{"spec": {"values": [1]}}, "nope"]}, "frame 2"),
+    ({"base": "array", "ms": 50, "frames": [{"spec": {"values": [1]}}] * 2}, "ms"),
+    ({"base": "array", "loop": "yes", "frames": [{"spec": {"values": [1]}}] * 2}, "loop"),
+])
+def test_animate_validation(spec, msg):
+    with pytest.raises(ValueError, match=msg):
+        viz.render("animate", spec)
+
+
+def test_animate_escapes_and_texts():
+    spec = {"base": "array", "frames": [
+        {"spec": {"values": ["<script>"], "pointers": {"<b>": 0}}, "caption": "<i>x</i>"},
+        {"spec": {"values": ["<script>"]}, "caption": "y"}]}
+    out = viz.render("animate", spec)
+    assert "<script" not in out and "<i>" not in out and "&lt;i&gt;x" in out
+    t = viz.texts("animate", spec)
+    assert "<i>x</i>" in t and "y" in t and "<b>" in t and "spec" not in t and "array" not in t
+
+
+def test_animate_leak_guard_on_frame_caption(hw):
+    uid, hid = hw
+    spec = {"base": "array", "frames": [
+        {"spec": {"values": [1, 2, 3], "highlight": [[0, 1]]}, "caption": "start"},
+        {"spec": {"values": [1, 2, 3], "highlight": [[1, 2]]}, "caption": "the window slides"}]}
+    with pytest.raises(ValueError, match="leak"):
+        service.show_visual(uid, hid, "animate", spec)
+    spec["frames"][1]["caption"] = "next"
+    spec["frames"][1]["spec"]["pointers"] = {"heap": 1}
+    with pytest.raises(ValueError, match="leak"):
+        service.show_visual(uid, hid, "animate", spec)
+    assert _count_visuals() == 0 and service.list_messages(uid) == []
+    del spec["frames"][1]["spec"]["pointers"]
+    r = service.show_visual(uid, hid, "animate", spec)
+    assert "viz-anim" in r["html"]
+    assert service.list_messages(uid)[-1]["content"] == "animation"
+
+
+def test_animate_rule_zero_on_frame_caption(hw):
+    uid, hid = hw
+    with db.session_scope() as s:
+        s.add(Pattern(slug="linked-list", name="Linked List", tier=1))
+        s.get(Handout, hid).pattern_slug = "linked-list"
+    spec = {"base": "list", "frames": [{"spec": {"values": [1, 2]}, "caption": "a linked list"},
+                                       {"spec": {"values": [1, 2]}, "caption": "b"}]}
+    with pytest.raises(ValueError, match="leak"):
+        service.show_visual(uid, hid, "animate", spec)
+
+
+def test_animate_in_statement_block():
+    import json as _json
+    from coach.web.app import mdblock
+    block = "Walk it:\n\n```viz\n" + _json.dumps({"kind": "animate", **_span_anim()}) + "\n```\n"
+    out = str(mdblock(block))
+    assert "viz-anim" in out and out.count('class="viz-frame') == 7
+    assert "illustration unavailable" in str(mdblock(
+        '```viz\n{"kind": "animate", "base": "array", "frames": []}\n```'))
+
+
+def test_animate_bubble_in_thread_and_assets(thread):
+    c, uid, hid = thread
+    service.show_visual(uid, hid, "animate", _span_anim())
+    html = c.get("/messages?since=0").text
+    assert "has-visual" in html and "viz-anim" in html and "viz-anim-bar" in html
+    page = c.get("/solve").text
+    assert page.index("/static/solve.js") < page.index("/static/anim.js")
+    from pathlib import Path
+    web = Path(viz.__file__).parent / "web" / "static"
+    css = (web / "viz.css").read_text(encoding="utf-8")
+    assert re.search(r"@media \(prefers-reduced-motion: reduce\)\s*\{\s*\.viz-anim", css)
+    js = (web / "anim.js").read_text(encoding="utf-8")
+    assert "MutationObserver" in js and "IntersectionObserver" in js and "prefers-reduced-motion" in js
