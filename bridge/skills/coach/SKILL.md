@@ -370,6 +370,25 @@ while a problem is open, nor right before a handoff. After `reveal` one line is 
 - One visual per `say`. `clear_visuals()` turns this problem's visuals in the thread into
   a muted "Illustration cleared." line.
 
+### Drawing kinds
+Spec lines for `show_visual` and ```viz blocks (new kinds also work as `animate` bases):
+- `list {values, links: [[from, to|null]], order: [i...] | [[row], [row]], offset: [0, 0.5],
+  highlight, pointers, caption}`. `links` replaces the default chain (every node you want an
+  arrow on must be listed; `null` = arrow to null). Use it for relinking problems (reverse,
+  reorder, merge, partition): one frame per pointer change. Same `values` in every frame and
+  the changed link is drawn in the accent colour, arrows swing to their new target and nodes
+  glide when `order` changes. Two rows (`order: [[...], [...]]`) for two lists or a front and
+  back half; end on a single-row `order` that reads as the result.
+- `graph {nodes: [id | {id, label}], edges: [[u, v] | [u, v, w]], directed, highlight: {nodes,
+  edges}, layout: auto | grid | circle | layered, caption}` (<= 40 nodes, 80 edges).
+- `intervals {intervals: [[s, e]], labels, highlight: [i], axis: {min, max}, merged: [[s, e]],
+  caption}`: bars on a number line, overlapping bars stacked.
+- `compare {before: {kind, spec}, after: {kind, spec}, mark_changes: true, caption}`: before ->
+  after; changed cells / nodes / links outlined in the accent.
+- `string {text, highlight: [i] | [[s, e]], pointers: {name: i}, dim, caption}`: character
+  cells with indices; spaces show as a dot.
+Labels, node names, weights and captions all go through the leak guard.
+
 ### Editor tools
 All act on the open problem. Everything you write goes through the leak guard (comments and
 identifiers count; words in the title or already in HIS code are fine). `{error: "leak: ..."}`

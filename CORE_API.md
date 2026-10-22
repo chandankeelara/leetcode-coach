@@ -319,6 +319,44 @@ on a clock error nothing is posted) (all act on the open handout). Chat side eff
   redirects to `/solve` while a problem is open.
 * `/reveal/{id}` shows the coach's `why` ("Why your coach picked it").
 
+## Drawing kinds (coach/viz.py: `render(kind, spec) -> html`, `texts(kind, spec)`)
+
+All kinds render as stills, inside `animate` frames (`base` = any kind but `io`, `html`,
+`animate`) and in statement ```viz blocks (`{"kind": ..., ...spec}`). Bad specs raise
+ValueError; `texts` returns every visible string for the leak guard (captions, labels, pointer
+names, node ids/labels, edge weights, string text; never layout or kind words).
+
+    list      {values, highlight, pointers: {name: i}, caption,
+               cycle_to: i            # old form: chain i -> i+1, last -> cycle_to
+               links: [[from, to|null]]  # replaces the chain; a node not listed has no arrow
+               order: [i, ...] | [[i|null, ...], ...]  # display slots; rows (max 4)
+               offset: [slots per row]   # shift a row right, e.g. [0, 0.5] for a zigzag
+               indices: bool}
+              Next-in-order links are straight, other same-row links arc above/below
+              (crossing or touching arcs swap sides), links between rows are straight
+              diagonals, null = short arrow to a "null" mark (right of a row's last node, left of
+              its first, else above/below). Every link path is a cubic keyed
+              data-k="link-<from>"; nodes carry data-i, data-x, data-y.
+              In animate: one frame of reference for all frames, links that differ from the
+              previous frame get viz-ll-chg (accent), nodes glide to new slots and links morph
+              (anim.js) when every frame has the same values.
+    graph     {nodes: [id | {id, label}] (<= 40), edges: [[u, v] | [u, v, w]] (<= 80),
+               directed: bool, highlight: {nodes: [id], edges: [[u, v]]} | [id],
+               layout: auto | grid | circle | layered, caption}
+              auto: layered for a DAG / undirected forest, circle up to 12 nodes, else grid.
+              Deterministic (graph_layout). In animate the layout comes from the union of all
+              frames, so nodes never move.
+    intervals {intervals: [[s, e]] (<= 60), labels: [text] | {i: text}, highlight: [i],
+               axis: {min, max}, merged: [[s, e]], caption}
+              Bars stacked greedily (iv_rows: first row whose last bar ends before s), merged
+              drawn as an accent outline row, ticks on a nice step. animate shares one axis.
+    compare   {before: {kind, spec}, after: {kind, spec}, mark_changes: true, caption}
+              Side by side with an arrow, stacked under 420 px. mark_changes outlines changed
+              cells for array / string / grid (by index) and, for list, nodes whose value or
+              slot changed plus changed links (accent). Error prefixes "before:" / "after:".
+    string    {text (<= 200 chars), highlight: [i] | [[s, e]], pointers, dim, labels, caption}
+              Character cells like array; spaces drawn as a muted dot. Tweens like array.
+
 ## Web: visuals
 
 `GET /visuals?since=N` (login) -> JSON `[{id, html, caption, kind}]` for the open handout,
