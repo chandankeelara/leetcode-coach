@@ -6,3 +6,5 @@ __pycache__/
 .env
 .mcp.json
 backups/
+.mcp.dev.json
+coach.db.bak-*
