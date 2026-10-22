@@ -459,3 +459,83 @@ it for `COACH_ADMIN`, default `chandan`), filters kind/tool/status/since, status
 
 Coach tools added: `rate_problem`, `get_rating`, `request_feature`; `hand_out` takes
 `phase_budget`, `budget_reason`; `clock` takes `force`.
+
+## Running the question (coach/reference.py, coach/notes.py; re-exported by service)
+
+The coach's PRIVATE reference solution per problem (the plain definition, slow on purpose,
+never the technique, never shown to him) runs the question so nobody hand-computes answers.
+
+```python
+set_reference(user_id, handout_id, code, mode="function", entry=None, options=None,
+              replace=False, reason="") -> {ok, number, verified, checked, passed,
+                                            mismatches: [{case_index, input, expected, got, error}],
+                                            replaced}
+#   problems.reference_code / _entry / _mode / _options {types, inplace, unordered} / _set_at /
+#   _ok (True verified on the examples, False failed them, None nothing to check) / _reason.
+#   Checked on the coach cases WITH expected in his Tests panel; stored even when it mismatches.
+#   Refused: > 200 lines, SyntaxError, no entry (falls back to the tests spec), or a verified
+#   reference without replace=True + reason. entry/options default to the tests spec / the first
+#   coach case. Emits `statement` (the page shows the playground).
+reference_of(number) -> {number, code, mode, entry, options, verified, set_at} | None
+resolve_cases(number, cases, mode, where="case") -> (cases, warnings)
+#   used by set_tests (coach cases) and judge (extra_cases): a case without expected gets the
+#   reference output; one with expected must agree, else ValueError("case 0: your expected 99010
+#   disagrees with the reference 99991 ..."); the reference raising -> ValueError. Small cases
+#   share one 10 s run; each case over 1000 elements runs alone, 10 s total for all of them; too
+#   slow -> kept unchecked when it has expected, else dropped; both add a warning.
+#   set_tests returns + expected_from_reference (n filled) and warnings when non-empty; judge
+#   returns + warnings. A verified None reference turns True when an explicit expected agrees.
+trace(user_id, handout_id, input, target="reference", max_steps=60, watch=None, allow=False,
+      reason="", code=None) -> {trace_id, target, frames: [{line, func, locals, note}],
+                                truncated, result, error}
+#   runner.trace: sys.settrace on solution.py lines only, one frame per line event (state
+#   BEFORE the line), notes "call f" / "return <json>" / "raise E". Locals JSON-safe: ListNode
+#   local {"$type": "ListNode", values, ids, cycle_to} (cycle-safe, 200 nodes), TreeNode
+#   {"$type": "TreeNode", values (level order), ids}, a node inside a container {"$type", val,
+#   id}; lists 50 items ("...+N"), depth 3, strings 200; self -> its __dict__; callables and
+#   modules skipped. max_steps <= 300, then truncated (the code still finishes, 5 s timeout).
+#   target "his": his draft (code_drafts, else his last submission) only after a `stuck` event,
+#   a user run with a failing case or a non-Accepted judge for that handout, or allow=True +
+#   reason. Stored in `traces` (id, user_id, handout_id, target, input, frames, result, reason).
+trace_to_animation(user_id, handout_id, trace_id=None, frames=None, base="array", map=None,
+                   ms=1200, post=False) -> {kind: "animate", spec, frames[, visual_id]}
+#   base array | list | tree | grid. map {values: var, pointers: {tag: var (int index or a
+#   node, matched by id)}, show: [vars in the caption], lines: [keep], highlight: var,
+#   cell: [rvar, cvar] (grid), keep_all, notes}. Caption "line N · note · a = 1". Consecutive
+#   identical drawings merge; > 40 frames sampled evenly; < 2 -> ValueError. Validated with
+#   viz.render; post=True goes through show_visual (leak guard).
+playground_state(user_id, handout_id) -> {ready, mode, params, example} | {..., ops, args}
+#   params from the reference's method signature (ast, never executed); example = the first
+#   coach case. ready False without a reference or when a name would leak.
+playground_run(user_id, handout_id, fields) -> {output, output_text, error, input_html, output_html}
+#   runs the REFERENCE on {name: literal} (JSON or Python literal; design: ops, args). 1 run/s
+#   per user (RateLimited, a ValueError -> 429), 2000 elements max. Pushes `playground`
+#   {handout_id, input, output, error}; no chat line. His page sees only a generic error text.
+predict(user_id, handout_id, input, choices=None) -> {ok, id, output, message_id}
+#   a `cards` row (kind predict) + a coach message "What does this return?" with card_id. 2-4
+#   choices, exactly one equal to the reference output; choices leak-guarded. The open card
+#   never contains the output.
+answer_predict(user_id, card_id, answer=None, choice=None) -> {ok, correct, html}
+#   once per card; pushes `prediction` {id, handout_id, correct, answer, output}.
+gallery(user_id, handout_id, inputs, caption="") -> {ok, id, rows: [{label, input, output, error}], message_id}
+#   1-8 inputs, one bubble (kind gallery); labels + caption leak-guarded.
+add_note(user_id, kind, note) / list_notes(user_id, active_only=True) / retire_note(user_id, id)
+#   learner_notes table (kind explanation | motivation | pace | other, <= 300 chars, no code,
+#   not his username). get_profile() adds `notes` (active). db.init seeds the owner (chandan)
+#   one explanation note, once.
+```
+
+`list_messages` rows carry `card` {id, kind, html, answered, correct} | null; `_messages.html`
+renders it (`.msg.has-card`). Tables: `traces`, `cards`, `learner_notes`; column
+`coach_messages.card_id`. `runner.run(..., out_cap=None)`: reference runs and `judge` use 3 MB
+so a large output compares whole.
+
+Web (login, CSRF on POST; `coach/web/reference_routes.py`): `GET /playground`, `POST /playground`
+(400 / 429 {error}), `POST /predict/{card_id}` (answer | choice; 400 {error}). Page: the Problem
+tab's "Try your own input" section (`#play`, hidden until ready, refreshed on `statement` /
+`resync`), `static/play.js` (also the card forms, delegated), `static/play.css`.
+
+Coach tools: `set_reference(code, mode, entry, options, replace, reason)`, `trace(input,
+target, max_steps, watch, allow, reason)`, `trace_to_animation(trace_id, frames, base, map, ms,
+post)`, `predict(input, choices)`, `gallery(inputs, caption)`, `note_learner(kind, note)`,
+`learner_notes(retire_id)`. `wait_for_event` kinds add `playground`, `prediction`.

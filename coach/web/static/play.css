@@ -32,7 +32,7 @@
 .play-fig .viz { margin: 0; }
 
 /* cards in the thread */
-.msg-card { max-width: min(560px, 100%); }
+.msg-card { max-width: min(600px, 100%); min-width: 0; }
 .rq { display: grid; gap: var(--s3); min-width: 0; }
 .rq-q { margin: 0; font-weight: 600; }
 .rq-cap { margin: 0; color: var(--text-2); }
@@ -70,7 +70,8 @@
 .rq-dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 4px var(--s3); }
 .rq-dl dt { font-size: var(--t-xs); text-transform: uppercase; letter-spacing: .08em; color: var(--text-3); align-self: center; }
 .rq-dl dd { margin: 0; min-width: 0; }
-.rq-table { width: 100%; border-collapse: collapse; }
+.rq-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.rq-table th:nth-child(2), .rq-table .rq-arrow { width: 24px; }
 .rq-table th {
   text-align: left; font-size: var(--t-xs); font-weight: 500; text-transform: uppercase;
   letter-spacing: .08em; color: var(--text-3); padding: 0 var(--s2) var(--s2) 0;
@@ -81,6 +82,7 @@
 .rq-err { color: var(--text-3); font-style: italic; }
 @media (max-width: 560px) {
   .rq-table thead { display: none; }
+  .rq-table, .rq-table tbody { display: block; }
   .rq-table tr { display: grid; grid-template-columns: 1fr; border-top: 1px solid var(--line); padding: var(--s2) 0; }
   .rq-table td { border: 0; padding: 2px 0; }
   .rq-table .rq-arrow { display: none; }
