@@ -400,3 +400,60 @@ Web (login): `GET /tests`, `POST /tests/run` (code), `POST /tests/add` (case = j
 `POST /tests/delete` (id); errors 400 {error}. Page: `_tests.html`, `static/tests.js`,
 `static/tests.css`. Bridge: `set_tests(cases, mode, entry)`, `run_tests(cases=None)` (his
 current draft via read_code, else the last submission; {error: "no code yet"}).
+
+## Steps, time budgets, rating, feedback (coach/steps.py, coach/rating.py, coach/feedback.py)
+
+**Steps.** Every `hand_out` handout has `handouts.phase_budget` {understand, approach, code}
+(minutes) and starts in `understand` (`phase_label`). Per-step seconds come from the coach's
+clock (pauses excluded): `phase_elapsed` (banked) + clock elapsed − `phase_start_s` for the
+current step. Fallback-picker handouts (`next_problem`) have no budget: the old single clock
+with a free phase label.
+
+* `understood(user_id, handout_id)` — HIS button (`POST /solve/understood`): understand ->
+  approach, pushes `understood {handout_id, understand_s, understand_budget_min}`, emits
+  `clock`. The coach's `clock(action="phase", label="approach")` is refused while in
+  understand unless `force=True` (going back to understand too).
+* `unlock_editor` moves approach -> code; `lock_editor` code -> approach. A reset zeroes
+  the steps; `clock(target)` puts the difference on the code step (refused if < 1 min).
+* `clock_state()` / `/handout/state` carry `steps {current, index, of, title, budget,
+  seconds, done: [{phase, label, seconds}]}` (None without a budget).
+* Checkpoints (wait_event loop): the total 50/100/150 % as before, plus ONE `clock_checkpoint
+  {phase, pct: 100, phase_min, phase_budget_min, elapsed_min, target_min, has_approach, mode}`
+  per step when it passes its budget. `_fire_idle`: ONE `idle {handout_id, phase, idle_s}`
+  after 180 s without a draft change, message, student event, test run or box reply; it
+  re-arms on his next activity; never while paused.
+
+**Budgets.** `hand_out(..., phase_budget=None, budget_reason="")`. Given: target = sum
+(`target_min`, if passed too, must equal it). Only `target_min`: split 15/30/55 %. Neither:
+E10/M15/H35 × rank factor (Bronze 1.3, Silver 1.15, Gold 1.0, Platinum 0.85, Diamond 0.75)
+× 0.8 if attempted before, split 15/30/55 %, each ≥ 1. Totals outside E 5–20, M 8–35,
+H 15–60 -> `PickRefused`. `budget_reason` is private (reveal, session_summary).
+
+**Problem ratings.** `problems.rating` (+ `rating_reason`, `rated_at`), set ONCE by
+`rate_problem(user_id, number, rating, why)`: band E 800–1300, M 1200–1900, H 1700–2600,
+else `PickRefused`; a second rating is refused. NULL = label default E1000/M1400/H1800.
+`find_problems` rows carry `rating`, `rated`.
+
+**Rating.** Tables `ratings` (user_id, mmr, games, updated_at) and `rating_events`
+(attempt_id unique, before, after, delta, expected, actual, k, problem_rating, breakdown,
+created_at). `log_attempt` rates each attempt once (and returns `rating {before, after, delta,
+rank, rank_up}`). Formulas: module docstring of coach/rating.py. Placement: the first time a
+user is rated (db.init migration, or his first log) every existing attempt is replayed in
+(day, id) order from its stored fields, breakdown `replayed: true`.
+`get_rating(user_id)` / `get_profile()` add `{mmr, rank, games, next_rank_at, to_next,
+recent_deltas}` (+ `default_budget` per level letter). `reveal()` adds `steps` [{phase, label,
+seconds, minutes, budget_min, over}], `budget_reason`, `problem_rating {rating, rated, why}`,
+`rating {before, after, delta, expected, actual, k, problem_rating, breakdown, rank_before,
+rank, rank_up, rank_down, next_rank_at}`. `rating_history(user_id, n)` feeds the dashboard.
+Progress data: `/reveal` and `/dashboard` only; never `/`, `/solve`, `/log` (test word list).
+
+**Feedback.** Table `coach_requests` (kind feature|friction|bug, key, title, why, example,
+severity blocked|workaround|nice, tool, count, first_at, last_at, status open|planned|done,
+session/handout ids). `request_feature(user_id, title, why, example, severity, tool, kind)`
+dedupes on normalised title (+ tool); `example` ≤ 400 chars, code-like text refused. Every
+coach tool that returns `{error}` or raises is filed by the registry (`Tool.call`) as
+friction (key = tool + error prefix). `/feedback` lists them for `users.is_admin` (db.init sets
+it for `COACH_ADMIN`, default `chandan`), filters kind/tool/status/since, status buttons.
+
+Coach tools added: `rate_problem`, `get_rating`, `request_feature`; `hand_out` takes
+`phase_budget`, `budget_reason`; `clock` takes `force`.
