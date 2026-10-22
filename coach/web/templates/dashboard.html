@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Dashboard · Coach{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/rating.css">{% endblock %}
 {% macro n(v, d=1, suffix="") %}{% if v is number %}{{ ("%." ~ d ~ "f")|format(v) if v is float else v }}{{ suffix }}{% else %}-{% endif %}{% endmacro %}
 {% macro pct(v) %}{% if v is number %}{{ (v * 100)|round|int }}%{% else %}-{% endif %}{% endmacro %}
 {% macro lvl(level) %}{% set l = level if level is number else 0 %}<span class="lvl {{ 'low' if l <= 1 else ('mid' if l <= 3 else 'high') }}" role="img" aria-label="level {{ l }} of 5">{% for i in range(5) %}<i class="{{ 'on' if i < l else '' }}"></i>{% endfor %}<b>L{{ l }}</b></span>{% endmacro %}
@@ -15,9 +16,42 @@
     <div class="grp">
       <a class="btn btn-quiet" href="/plan">Plan</a>
       <a class="btn btn-quiet" href="/connect">Connect coach</a>
+      {% if admin %}<a class="btn btn-quiet" href="/feedback">Feedback</a>{% endif %}
       <a class="btn btn-primary" href="/">Next problem</a>
     </div>
   </div>
+
+  {# ---- rating (coach/rating.py): dashboard and reveal only ---- #}
+  {% if rt %}
+  <section class="card rank-card" id="rank-card">
+    <span class="rank-badge rank-lg rank-{{ rt.rank|lower }}">{{ rt.rank }}</span>
+    <div class="rank-mmr">
+      <span class="eyebrow">MMR</span>
+      <span class="rank-v">{{ rt.mmr }}</span>
+      <span class="kpi-s">{{ rt.games }} rated problem{{ "" if rt.games == 1 else "s" }}</span>
+    </div>
+    <div class="rank-next">
+      {% if rt.next_rank_at %}
+      {% set lo = {"Silver": 1200, "Gold": 1400, "Platinum": 1600, "Diamond": 1800}.get(rt.rank, 1000) %}
+      {% set span = rt.next_rank_at.mmr - lo %}
+      <span class="eyebrow">Next rank</span>
+      <span class="rank-next-v"><b>{{ rt.to_next }}</b> to {{ rt.next_rank_at.rank }} <small>({{ rt.next_rank_at.mmr }})</small></span>
+      <div class="kpi-bar" role="img" aria-label="{{ rt.mmr }} of {{ rt.next_rank_at.mmr }}"><i style="width: {{ [100, [0, ((rt.mmr - lo) / span * 100)]|max]|min if span > 0 else 0 }}%"></i></div>
+      {% else %}
+      <span class="eyebrow">Next rank</span><span class="rank-next-v">Top rank</span>
+      {% endif %}
+    </div>
+    <div class="rank-spark">
+      <span class="eyebrow">Last {{ (spark.bars|length) if spark else 0 }} changes</span>
+      {% if spark %}
+      <svg class="spark" viewBox="0 0 {{ spark.w }} {{ spark.h }}" width="{{ spark.w }}" height="{{ spark.h }}" role="img" aria-label="Rating changes, oldest to newest">
+        <line x1="0" x2="{{ spark.w }}" y1="{{ spark.mid }}" y2="{{ spark.mid }}" class="spark-base"/>
+        {% for b in spark.bars %}<rect x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}" rx="1" class="{{ 'up' if b.up else 'down' }}"><title>{{ b.title }}</title></rect>{% endfor %}
+      </svg>
+      {% else %}<span class="kpi-s">No rated problems yet.</span>{% endif %}
+    </div>
+  </section>
+  {% endif %}
 
   <div class="kpis">
     <section class="kpi {{ 'hot' if (b.backlog or 0) > 0 else 'good' }}">

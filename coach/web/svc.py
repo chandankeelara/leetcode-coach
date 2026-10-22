@@ -192,6 +192,22 @@ class Svc:
         from ..lint import lint
         return lint(src)
 
+    # ---- steps, rating, feedback (coach/steps.py, coach/rating.py, coach/feedback.py) ----
+    def understood(self, user_id, handout_id):
+        return _s.understood(user_id, handout_id)
+
+    def rating_history(self, user_id, n=20):
+        return _s.rating_history(user_id, n)
+
+    def is_admin(self, user_id):
+        return _s.is_admin(user_id)
+
+    def list_requests(self, **kw):
+        return _s.list_requests(**kw)
+
+    def set_request_status(self, request_id, status):
+        return _s.set_request_status(request_id, status)
+
 
 def _handout_user(s, handout_id):
     """Whose handout is this? Used to scope reveal lookups to one user."""

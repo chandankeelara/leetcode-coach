@@ -59,6 +59,8 @@
     if ((c.resets | 0) > resets) toast("Clock reset.", "info");
     resets = c.resets | 0;
     tick();
+    /* the steps of a problem render in steps.js */
+    document.dispatchEvent(new CustomEvent("coach:clock", { detail: c }));
   }
   function tick() {
     var n = elapsed0 + (run ? Math.floor((performance.now() - t0) / 1000) : 0);

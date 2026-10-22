@@ -7,7 +7,8 @@
 {% endblock %}
 {% block topbar %}
 {% set ck = clock or {} %}
-<div class="clock" id="timer" role="timer" aria-label="Elapsed time" title="Started {{ started }}" data-run="{{ ck.state or 'running' }}">
+<div class="clock{{ ' has-steps' if ck.steps else '' }}" id="timer" role="timer" aria-label="Elapsed time" title="Started {{ started }}" data-run="{{ ck.state or 'running' }}" data-steps='{{ (ck.steps or none)|tojson }}'>
+  <span class="steps" id="t-steps" aria-live="polite"></span>
   <span class="clock-phase" id="t-phase">{{ ck.phase or "" }}</span>
   <span class="clock-now" id="t-now">00:00</span>
   <span class="clock-paused" id="t-paused" title="{{ ck.pause_reason or '' }}"{% if ck.state != "paused" %} hidden{% endif %}>Paused</span>
@@ -20,7 +21,7 @@
 {% block body %}
 {% set ck = clock or {} %}
 {% set sent = (msgs|selectattr("role", "equalto", "user")|list|length) > 0 %}
-<section class="solve" id="solve" data-hid="{{ h.handout_id }}" data-elapsed="{{ elapsed }}" data-target="{{ ck.target_min or h.target_min }}" data-run="{{ ck.state or 'running' }}" data-resets="{{ ck.resets or 0 }}" data-last="{{ last }}" data-title="{{ h.number }}. {{ h.title }}" data-stage="{{ 'code' if editor_open else ('discuss' if sent else 'approach') }}" data-tab="think">
+<section class="solve" id="solve" data-hid="{{ h.handout_id }}" data-elapsed="{{ elapsed }}" data-target="{{ ck.target_min or h.target_min }}" data-run="{{ ck.state or 'running' }}" data-resets="{{ ck.resets or 0 }}" data-last="{{ last }}" data-title="{{ h.number }}. {{ h.title }}" data-stage="{{ 'code' if editor_open else ('discuss' if sent else 'approach') }}" data-step="{{ (ck.steps.current if ck.steps else '') or '' }}" data-tab="think">
   <div class="tabs" role="tablist" aria-label="Workspace">
     <button class="tab" type="button" role="tab" id="tab-prob" data-go="prob" aria-controls="pane-prob" aria-selected="false">Problem</button>
     <button class="tab" type="button" role="tab" id="tab-think" data-go="think" aria-controls="pane-think" aria-selected="true">Discuss<span class="tab-dot" id="tab-unread" hidden></span></button>
@@ -70,6 +71,11 @@
         </div>
         {% include "_messages.html" %}
         <div class="typing" id="typing" hidden role="status" aria-label="Coach is typing"><span></span><span></span><span></span></div>
+      </div>
+
+      <div class="understood" id="understood">
+        <p class="understood-lead">Read the problem first. Ask in the chat about anything unclear.</p>
+        <button class="btn btn-primary btn-lg" type="button" id="understood-btn">I understand the question</button>
       </div>
 
       <form class="appr" id="appr" autocomplete="off">
@@ -161,5 +167,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/comment/comment.min.js"></script>
 <script src="/static/solve.js"></script>
 <script src="/static/tests.js"></script>
+<script src="/static/steps.js"></script>
+<link rel="stylesheet" href="/static/steps.css">
 <link rel="stylesheet" href="/static/viz.css">
 {% endblock %}

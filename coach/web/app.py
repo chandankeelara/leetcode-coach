@@ -377,6 +377,24 @@ async def approach(request: Request):
     return frag("Sent.")
 
 
+@app.post("/solve/understood")
+async def understood(request: Request):
+    """Step 1 ends: he understood the question (coach/steps.py). The server records the
+    understand time, starts the approach step and tells the coach (`understood` event)."""
+    sess, _ = await authed_form(request)
+    h = service().current_handout(sess["uid"])
+    f = getattr(service(), "understood", None)
+    if not h or f is None:
+        return JSONResponse({"ok": False, "error": "No open problem."}, status_code=400)
+    try:
+        r = await run_in_threadpool(f, sess["uid"], h.handout_id)
+    except ValueError as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+    r = dict(r)
+    r["clock"] = clock_of(sess["uid"], h)
+    return JSONResponse(r)
+
+
 @app.post("/solve/submit", response_class=HTMLResponse)
 async def submit(request: Request):
     sess, form = await authed_form(request)
@@ -737,9 +755,87 @@ async def dashboard(request: Request):
     rep = service().report(sess["uid"], REPORT_DATE)
     rows = history_rows(sess["uid"])
     heat = heat14(rows, (st.get("streak") or {}).get("last14", ""))
+    rt = rating_of(sess["uid"])
     return render(request, "dashboard.html", sess, nav="full", active="dashboard", st=st,
                   rep=rep, report_date=REPORT_DATE, heat=heat,
-                  heat_max=max([c["n"] for c in heat] + [1]))
+                  heat_max=max([c["n"] for c in heat] + [1]), rt=rt, spark=sparkline(rt),
+                  admin=is_admin(sess["uid"]))
+
+
+def rating_of(uid):
+    """The rating block with the last 20 deltas (service.rating_history), or None. Progress
+    data: dashboard and reveal only, never /, /solve, /log."""
+    f = getattr(service(), "rating_history", None)
+    if f is None:
+        return None
+    try:
+        return f(uid)
+    except Exception:
+        return None
+
+
+def sparkline(rt, w=220, h=44):
+    """Bars for the last 20 rating deltas: [{x, y, h, up, title}], baseline mid-height."""
+    ds = (rt or {}).get("recent_deltas") or []
+    if not ds:
+        return None
+    top = max([abs(d["delta"]) for d in ds] + [1.0])
+    n, gap = len(ds), 2
+    bw = max(2.0, (w - gap * (n - 1)) / max(n, 1))
+    mid = h / 2
+    bars = []
+    for i, d in enumerate(ds):
+        bh = max(1.5, abs(d["delta"]) / top * (mid - 2))
+        up = d["delta"] >= 0
+        bars.append({"x": round(i * (bw + gap), 1), "y": round(mid - bh if up else mid, 1),
+                     "h": round(bh, 1), "w": round(bw, 1), "up": up,
+                     "title": f'{d["day"]} #{d["number"]}: {d["delta"]:+.1f}'})
+    return {"w": w, "h": h, "mid": mid, "bars": bars}
+
+
+def is_admin(uid):
+    f = getattr(service(), "is_admin", None)
+    try:
+        return bool(f and f(uid))
+    except Exception:
+        return False
+
+
+# ---- feedback to the dev team (admins only) -------------------------------------------------
+FEEDBACK_SEV = {"blocked": "badge-danger", "workaround": "badge-warn", "nice": ""}
+
+
+@app.get("/feedback", response_class=HTMLResponse)
+async def feedback(request: Request, kind: str = "", tool: str = "", since: str = "",
+                   status: str = ""):
+    sess = require(request)
+    if not is_admin(sess["uid"]):
+        raise HTTPException(404)
+    since_dt = None
+    if since:
+        try:
+            since_dt = datetime.fromisoformat(since)
+        except ValueError:
+            since_dt = None
+    data = service().list_requests(kind=kind or None, tool=tool or None, since=since_dt,
+                                   status=status or None)
+    return render(request, "feedback.html", sess, nav="full", active="feedback",
+                  rows=data["rows"], tools=data["tools"], f={"kind": kind, "tool": tool,
+                                                            "since": since, "status": status},
+                  sev=FEEDBACK_SEV, admin=True)
+
+
+@app.post("/feedback/{request_id}/status")
+async def feedback_status(request: Request, request_id: int):
+    sess, form = await authed_form(request)
+    if not is_admin(sess["uid"]):
+        raise HTTPException(404)
+    try:
+        service().set_request_status(request_id, form.get("status") or "")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    back = form.get("back") or "/feedback"
+    return go(back if back.startswith("/feedback") else "/feedback")
 
 
 @app.get("/history", response_class=HTMLResponse)

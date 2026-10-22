@@ -1,0 +1,55 @@
+/* Steps of a problem (steps.js): one current step in the timer, finished steps as chips, the
+   total small beside it. Step 1 hides the approach box until "I understand the question". */
+.steps { display: none; align-items: center; gap: 8px; font-family: var(--f-ui); font-stretch: normal; }
+.clock.has-steps .steps { display: inline-flex; }
+.clock.has-steps .clock-track,
+.clock.has-steps .clock-phase,
+.clock.has-steps .clock-of-lbl { display: none; }
+.clock.has-steps .clock-now { font-size: 13px; font-weight: 500; color: var(--text-3); min-width: 0; }
+.clock.has-steps .clock-of { font-size: 13px; }
+.clock.has-steps .clock-of::before { content: "/ "; }
+.clock.has-steps { gap: 10px; }
+
+.step-chip {
+  font: 600 11.5px/1 var(--f-ui); color: var(--ok); white-space: nowrap;
+  padding: 4px 8px; border-radius: var(--r-pill); background: var(--ok-wash);
+  font-variant-numeric: tabular-nums;
+}
+.step-cur {
+  display: inline-flex; align-items: baseline; gap: 6px; white-space: nowrap;
+  padding: 5px 11px; border-radius: var(--r-pill);
+  background: var(--hl-wash); border: 1px solid var(--hl-line);
+}
+.step-n { font: 600 11.5px/1 var(--f-ui); color: var(--text-2); letter-spacing: .01em; }
+.step-sep { color: var(--text-3); font-size: 12px; }
+.step-t { font: 700 13.5px/1 var(--f-ui); color: var(--text); letter-spacing: -0.01em; }
+.step-time {
+  font: 500 14px/1 var(--f-num); font-stretch: 87.5%; font-variant-numeric: tabular-nums;
+  color: var(--text); margin-left: 4px; letter-spacing: -0.02em;
+}
+.step-cur[data-over="1"] { background: var(--warn-wash); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
+.step-cur[data-over="1"] .step-time { color: var(--warn); }
+.clock[data-run="paused"] .step-time { color: var(--text-3); }
+
+/* step 1: the "I understand" panel replaces the approach box; the chat stays open for questions */
+.understood { display: none; }
+.solve[data-step="understand"] .understood {
+  flex: none; display: flex; flex-direction: column; align-items: flex-start; gap: var(--s3);
+  width: 100%; max-width: 800px; margin: 0 auto; padding: var(--s4) var(--s5) var(--s3);
+  border-top: 1px solid var(--line);
+}
+.understood-lead { color: var(--text-2); font-size: var(--t-base); margin: 0; }
+.solve[data-step="understand"] .appr,
+.solve[data-step="understand"].revising .appr { display: none !important; }
+.solve[data-step="understand"] .chat-form { display: block; }
+.solve[data-step="understand"] .chat-log { display: flex; }
+.solve[data-step="understand"] #appr-again { display: none; }
+
+@media (max-width: 900px) {
+  .step-chip { display: none; }
+}
+@media (max-width: 640px) {
+  .step-n, .step-sep { display: none; }
+  .step-t { font-size: 12.5px; }
+  .clock.has-steps .clock-now, .clock.has-steps .clock-of { display: none; }
+}

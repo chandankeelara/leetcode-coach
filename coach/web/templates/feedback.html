@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Feedback · Coach{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/rating.css">{% endblock %}
+{% block body %}
+<div class="page">
+  <div class="page-head">
+    <div>
+      <h1>Coach feedback</h1>
+      <p class="sub">What the coach asked for, and every tool call that failed it. Blocked first, then most often.</p>
+    </div>
+    <div class="grp"><a class="btn btn-quiet" href="/dashboard">Dashboard</a></div>
+  </div>
+
+  <form class="fb-filters" method="get" action="/feedback">
+    <label>Kind <select name="kind">
+      <option value="">all</option>
+      {% for k in ["feature", "friction", "bug"] %}<option value="{{ k }}" {% if f.kind == k %}selected{% endif %}>{{ k }}</option>{% endfor %}
+    </select></label>
+    <label>Tool <select name="tool">
+      <option value="">all</option>
+      {% for t in tools %}<option value="{{ t }}" {% if f.tool == t %}selected{% endif %}>{{ t }}</option>{% endfor %}
+    </select></label>
+    <label>Status <select name="status">
+      <option value="">all</option>
+      {% for s in ["open", "planned", "done"] %}<option value="{{ s }}" {% if f.status == s %}selected{% endif %}>{{ s }}</option>{% endfor %}
+    </select></label>
+    <label>Since <input type="date" name="since" value="{{ f.since }}"></label>
+    <button class="btn btn-sm" type="submit">Filter</button>
+    {% if f.kind or f.tool or f.since or f.status %}<a class="btn btn-quiet btn-sm" href="/feedback">Clear</a>{% endif %}
+  </form>
+
+  <section class="card">
+    <div class="sec-head"><h2>Requests</h2><span class="faint num">{{ rows|length }}</span></div>
+    <div class="sec-body">
+      {% if rows %}
+      <table class="fb-table">
+        <thead><tr><th>Severity</th><th>Kind</th><th>Title</th><th>Tool</th><th class="num">Count</th><th>Last</th><th>Status</th></tr></thead>
+        <tbody>
+          {% for r in rows %}
+          <tr data-status="{{ r.status }}">
+            <td><span class="badge {{ sev.get(r.severity, '') }}">{{ r.severity }}</span></td>
+            <td>{{ r.kind }}</td>
+            <td class="fb-title"><strong>{{ r.title }}</strong>
+              {% if r.why and r.why != r.title %}<div class="fb-why">{{ r.why }}</div>{% endif %}
+              {% if r.example %}<div class="fb-ex">{{ r.example }}</div>{% endif %}</td>
+            <td>{{ r.tool or "" }}</td>
+            <td class="num">{{ r.count }}</td>
+            <td class="fb-when">{{ (r.last_at or "")[:16]|replace("T", " ") }}</td>
+            <td>
+              <form method="post" action="/feedback/{{ r.id }}/status" class="fb-status">
+                <input type="hidden" name="csrf" value="{{ csrf }}">
+                <input type="hidden" name="back" value="{{ request.url.path }}{% if request.url.query %}?{{ request.url.query }}{% endif %}">
+                {% for s in ["open", "planned", "done"] %}<button class="seg{{ ' on' if r.status == s else '' }}" type="submit" name="status" value="{{ s }}" aria-pressed="{{ 'true' if r.status == s else 'false' }}">{{ s }}</button>{% endfor %}
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <p class="empty">Nothing filed{% if f.kind or f.tool or f.since or f.status %} for this filter{% endif %}.</p>
+      {% endif %}
+    </div>
+  </section>
+</div>
+{% endblock %}
