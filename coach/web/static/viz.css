@@ -39,8 +39,17 @@
 .viz-array .viz-col + .viz-col { margin-left: -1px; }
 .viz-array .viz-col:first-child .viz-cell { border-radius: var(--r-1) 0 0 var(--r-1); }
 .viz-array .viz-col:last-child .viz-cell { border-radius: 0 var(--r-1) var(--r-1) 0; }
-.has-ptr .viz-ptr { height: 16px; display: flex; align-items: flex-end; }
-.has-ptr .viz-col-ptr .viz-ptr::after { content: "\25BE"; margin-left: 2px; font-size: 10px; }
+/* tag name over a centred caret, so the caret points at the middle of its cell */
+.has-ptr .viz-ptr {
+  height: 24px; display: flex; flex-direction: column; align-items: center; justify-content: flex-end;
+}
+.has-ptr .viz-col-ptr .viz-ptr::after { content: "\25BE"; font-size: 10px; line-height: 9px; }
+/* dim: in the input but not reached yet; same box, so nothing moves */
+.viz-cell.viz-dim {
+  background: transparent; border-style: dashed; border-color: var(--line-2);
+  color: color-mix(in srgb, var(--text-3) 70%, transparent); font-weight: 500;
+}
+.viz-col-dim .viz-idx { opacity: 0.55; }
 .viz-col:not(.viz-col-ptr) .viz-ptr:empty { visibility: hidden; }
 .viz-array:not(.has-ptr) .viz-ptr { display: none; }
 
@@ -159,3 +168,87 @@
 .viz-raw svg { display: block; max-width: none; }
 .viz-raw svg text { fill: var(--text); font-family: var(--f-num); }
 .viz-raw .hl { background: var(--hl-wash); color: var(--hl-ink); }
+
+/* animate: frames stacked in one cell (the tallest sets the height), one shown; player below */
+.viz-anim { container-type: inline-size; outline: none; border-radius: var(--r-2); }
+.viz-anim:focus-visible { outline: 2px solid var(--focus); outline-offset: 4px; }
+.viz-anim-stage { display: grid; min-width: 0; }
+.viz-frame { grid-area: 1 / 1; min-width: 0; visibility: hidden; }
+.viz-frame.is-on, .viz-frame.is-out { visibility: visible; }
+.viz-frame.is-out { z-index: 1; pointer-events: none; }
+.viz-anim .is-moved { opacity: 0; }
+/* array tags float over their column so a wide name never widens it: cells stay put across frames */
+.viz-anim .viz-array.has-ptr { padding-inline: 10px; }
+.viz-anim .viz-array.has-ptr .viz-col { position: relative; padding-top: 28px; }
+.viz-anim .viz-array.has-ptr .viz-ptr { position: absolute; top: 0; left: 50%; translate: -50% 0; }
+.viz-anim-caps { display: grid; margin-top: var(--s2); }
+.viz-anim-cap {
+  grid-area: 1 / 1; margin: 0; visibility: hidden;
+  font-size: 14px; line-height: 1.45; color: var(--text);
+}
+.viz-anim-cap.is-on { visibility: visible; }
+.viz-anim-cap:empty { min-height: 0; }
+
+.viz-anim-bar {
+  display: none; align-items: center; gap: 6px; flex-wrap: wrap;
+  margin-top: var(--s3); padding-top: var(--s2); border-top: 1px solid var(--line);
+}
+.viz-anim.is-ready .viz-anim-bar { display: flex; }
+.viz-anim-btn {
+  flex: none; display: inline-grid; place-items: center;
+  width: 30px; height: 30px; padding: 0; border-radius: var(--r-2);
+  background: transparent; border: 1px solid var(--line-2); color: var(--text-2); cursor: pointer;
+  transition: background var(--d-fast), color var(--d-fast), border-color var(--d-fast);
+}
+.viz-anim-btn:hover { background: var(--raised-2); color: var(--text); }
+.viz-anim-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.viz-anim-btn svg { fill: currentColor; }
+.viz-anim-play { background: var(--hl); border-color: var(--hl); color: var(--on-hl); }
+.viz-anim-play:hover { background: var(--hl-strong); color: var(--on-hl); }
+.viz-anim .viz-i-pause, .viz-anim.is-playing .viz-i-play { display: none; }
+.viz-anim.is-playing .viz-i-pause { display: inline; }
+.viz-anim-speed {
+  width: auto; min-width: 38px; padding: 0 6px;
+  font: 500 11px/1 var(--f-num); font-stretch: 87.5%; font-variant-numeric: tabular-nums;
+}
+.viz-anim-count {
+  flex: none; min-width: 3.6em; text-align: center;
+  font: 400 11px/1 var(--f-num); font-stretch: 87.5%; font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+.viz-anim-count b { font-weight: 600; color: var(--text-2); }
+
+.viz-anim-scrub {
+  flex: 1 1 80px; min-width: 60px; height: 22px; margin: 0 4px;
+  -webkit-appearance: none; appearance: none; background: transparent; cursor: pointer;
+}
+.viz-anim-scrub:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--r-1); }
+.viz-anim-scrub::-webkit-slider-runnable-track {
+  height: 4px; border-radius: var(--r-pill);
+  background: linear-gradient(to right, var(--hl) var(--p, 0%), var(--line-2) var(--p, 0%));
+}
+.viz-anim-scrub::-moz-range-track { height: 4px; border-radius: var(--r-pill); background: var(--line-2); }
+.viz-anim-scrub::-moz-range-progress { height: 4px; border-radius: var(--r-pill); background: var(--hl); }
+.viz-anim-scrub::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none; width: 14px; height: 14px; margin-top: -5px;
+  border-radius: 50%; background: var(--hl); border: 2px solid var(--pane);
+  box-shadow: 0 0 0 1px var(--hl-line);
+}
+.viz-anim-scrub::-moz-range-thumb {
+  width: 12px; height: 12px; border-radius: 50%; background: var(--hl); border: 2px solid var(--pane);
+}
+:root[data-theme="light"] .viz-anim-scrub::-webkit-slider-thumb { box-shadow: 0 0 0 1px #b58a00; }
+
+/* narrow pane: buttons on one row, the scrubber on its own row below */
+@container (max-width: 300px) {
+  .viz-anim .viz-array .viz-cell { min-width: 28px; height: 30px; padding: 0 4px; font-size: 12.5px; }
+  .viz-anim-scrub { order: 9; flex-basis: 100%; margin: 4px 0 0; }
+  .viz-anim-count { margin-left: auto; }
+}
+@media (pointer: coarse) {
+  .viz-anim-btn { width: 40px; height: 40px; }
+  .viz-anim-speed { min-width: 46px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .viz-anim, .viz-anim * { transition: none !important; animation: none !important; }
+}

@@ -1,6 +1,6 @@
 """Coach visuals: `render(kind, spec) -> html`, shown as a coach message in the thread.
 
-Kinds: array | grid | list | tree | steps | io | html. Every value is escaped (markupsafe);
+Kinds: array | grid | list | tree | steps | io | html | animate. Every value is escaped (markupsafe);
 styling is by class only (viz.css). `texts(kind, spec)` returns every human-readable string in a
 spec, for the leak guard in `service.show_visual`. Bad specs raise ValueError.
 """
@@ -11,9 +11,10 @@ from html.parser import HTMLParser
 
 from markupsafe import Markup, escape
 
-KINDS = ("array", "grid", "list", "tree", "steps", "io", "html")
+KINDS = ("array", "grid", "list", "tree", "steps", "io", "html", "animate")
 KIND_LABEL = {"array": "array", "grid": "grid", "list": "list", "tree": "tree",
-              "steps": "step table", "io": "examples", "html": "illustration"}
+              "steps": "step table", "io": "examples", "html": "illustration",
+              "animate": "animation"}
 
 MAX_ITEMS = 200          # array / list values
 MAX_GRID = 40            # rows and columns
@@ -135,21 +136,24 @@ def _render_array(spec):
     vals = _list(spec, "values", limit=MAX_ITEMS)
     n = len(vals)
     hl = _index_set(spec, n)
+    dim = _index_set(spec, n, "dim")
     ptr = _pointers(spec, n)
     lab = _labels(spec, n)
     cols = []
     for i, v in enumerate(vals):
         p = ptr.get(i)
         cols.append(Markup(
-            '<div class="{col}">'
-            '<span class="viz-ptr">{ptr}</span>'
+            '<div class="{col}" data-i="{i}">'
+            '<span class="viz-ptr"{key}>{ptr}</span>'
             '<span class="{cell}">{v}</span>'
             '<span class="viz-idx">{i}</span>'
             '<span class="viz-label">{lab}</span>'
             '</div>').format(
-                col=_cls("viz-col", "viz-col-ptr" if p else ""),
+                col=_cls("viz-col", "viz-col-ptr" if p else "", "viz-col-dim" if i in dim else ""),
+                key=Markup(' data-k="{}"').format(" ".join(p)) if p else "",
                 ptr=", ".join(p) if p else "",
-                cell=_cls("viz-cell", "viz-hl" if i in hl else "", "viz-null" if v is None else ""),
+                cell=_cls("viz-cell", "viz-hl" if i in hl and i not in dim else "",
+                          "viz-dim" if i in dim else "", "viz-null" if v is None else ""),
                 v=_txt(v, "value"), i=i, lab=lab.get(i, "")))
     if not cols:
         cols.append(Markup('<span class="viz-empty">[ ]</span>'))
@@ -234,7 +238,8 @@ LL_LOOP = 44             # bezier control depth of the back-arrow below the row
 _POS_CAPTION = re.compile(r"^pos\s*=\s*-?\d+$", re.I)
 
 
-def _render_list(spec):
+def _render_list(spec, reserve_tags=False, tag_w=0, min_w=0):
+    """reserve_tags / tag_w / min_w: animate passes these so every frame has the same frame."""
     vals = _list(spec, "values", limit=MAX_ITEMS)
     n = len(vals)
     hl = _index_set(spec, n)
@@ -254,12 +259,13 @@ def _render_list(spec):
     nw = max(40, max(len(t) for t in texts) * LL_CH + 18)
     pitch = nw + LL_GAP
     pad = 6
-    ptr_h = 30 if ptr else 0
+    ptr_h = 30 if ptr or reserve_tags else 0
     idx_h = 16 if cyc is not None else 0
     top = pad + ptr_h + idx_h
     mid_y = top + LL_H / 2
     bot = top + LL_H
-    widest = max((len(", ".join(v)) for v in ptr.values()), default=0) * LL_PTR_CH + 12
+    widest = max([max((len(", ".join(v)) for v in ptr.values()), default=0) * LL_PTR_CH + 12,
+                  tag_w])
     x0 = pad + max(0, widest - nw) / 2
 
     def left(i):
@@ -305,10 +311,10 @@ def _render_list(spec):
         x = left(i)
         g = _cls("viz-ll-node", "viz-hl" if i in hl else "", "viz-null" if vals[i] is None else "")
         parts.append(Markup(
-            '<g class="{g}"><rect class="viz-ll-box" x="{x:.1f}" y="{y:.1f}" width="{w:.1f}" '
+            '<g class="{g}" data-i="{i}"><rect class="viz-ll-box" x="{x:.1f}" y="{y:.1f}" width="{w:.1f}" '
             'height="{h}" rx="7"/><text class="viz-ll-val" x="{c:.1f}" y="{m:.1f}" '
             'text-anchor="middle" dominant-baseline="central">{t}</text></g>').format(
-                g=g, x=x, y=top, w=nw, h=LL_H, c=cx(i), m=mid_y, t=t))
+                g=g, i=i, x=x, y=top, w=nw, h=LL_H, c=cx(i), m=mid_y, t=t))
         if cyc is not None:
             parts.append(Markup('<text class="viz-ll-idx" x="{:.1f}" y="{:.1f}" '
                                 'text-anchor="middle">{}</text>').format(cx(i), top - 5, i))
@@ -319,11 +325,11 @@ def _render_list(spec):
             tw = len(label) * LL_PTR_CH + 12
             c = cx(i)
             parts.append(Markup(
-                '<g class="viz-ll-ptr"><rect class="viz-ll-tag" x="{x:.1f}" y="{y}" '
+                '<g class="viz-ll-ptr" data-k="{k}"><rect class="viz-ll-tag" x="{x:.1f}" y="{y}" '
                 'width="{w:.1f}" height="17" rx="4"/><text class="viz-ll-ptr-name" x="{c:.1f}" '
                 'y="{ty}" text-anchor="middle" dominant-baseline="central">{t}</text>'
                 '<path class="viz-ll-ptr-line" d="M{c:.1f},{y1} V{y2}" marker-end="url(#{m})"/>'
-                '</g>').format(x=c - tw / 2, y=pad, w=tw, c=c, ty=pad + 8.5, t=label,
+                '</g>').format(k=" ".join(names), x=c - tw / 2, y=pad, w=tw, c=c, ty=pad + 8.5, t=label,
                                y1=pad + 18, y2=top - idx_h - 2, m=m_ptr))
             w = max(w, c + tw / 2 + pad)
     if cyc is None:
@@ -331,6 +337,7 @@ def _render_list(spec):
     else:
         label = ("linked list " + ", ".join(texts) +
                  f"; the last node links back to node {cyc} (value {texts[cyc]})")
+    w = max(w, min_w)
     svg = _svg("viz-ll", w, h, label,
                Markup("<defs>{}</defs>{}").format(Markup("").join(defs), Markup("").join(parts)))
     body = Markup('<div class="viz-scroll">{}</div>').format(svg)
@@ -562,10 +569,158 @@ def _render_html(spec):
         Markup(safe)), _caption(spec))
 
 
+# ---- animate: frames of one base kind, played in place ------------------------------------
+ANIM_BASES = ("array", "list", "tree", "grid", "steps")
+MIN_FRAMES, MAX_FRAMES = 2, 40
+ANIM_MS = (300, 6000)
+MAX_ANIM_HTML = 400000
+
+_ICON = {
+    "prev": '<path d="M5 4v12M16 4 8 10l8 6z"/>',
+    "next": '<path d="M15 4v12M4 4l8 6-8 6z"/>',
+    "play": '<path class="viz-i-play" d="M6 4l11 6-11 6z"/>'
+            '<path class="viz-i-pause" d="M6 4h3v12H6zM11 4h3v12h-3z"/>',
+}
+
+
+def _icon(name):
+    return Markup('<svg viewBox="0 0 20 20" width="14" height="14" aria-hidden="true" '
+                  'focusable="false">{}</svg>').format(Markup(_ICON[name]))
+
+
+def _anim_frames(spec):
+    base = spec.get("base")
+    if base not in ANIM_BASES:
+        raise ValueError(f"spec.base must be one of {', '.join(ANIM_BASES)}")
+    frames = _list(spec, "frames", limit=MAX_FRAMES)
+    if len(frames) < MIN_FRAMES:
+        raise ValueError(f"spec.frames: at least {MIN_FRAMES} frames")
+    out = []
+    for n, f in enumerate(frames, 1):
+        if not isinstance(f, dict) or not isinstance(f.get("spec"), dict):
+            raise ValueError(f"frame {n}: each frame is {{spec, caption}}")
+        inner = dict(f["spec"])
+        cap = f.get("caption")
+        cap = _txt(cap, f"frame {n} caption").strip() if cap not in (None, "") else ""
+        inner_cap = inner.pop("caption", None)
+        if not cap and inner_cap not in (None, ""):
+            cap = _txt(inner_cap, f"frame {n} caption").strip()
+        out.append((inner, cap))
+    return base, out
+
+
+def _anim_options(spec):
+    ms = spec.get("ms", 1200)
+    ms = _int(ms, "spec.ms")
+    if not ANIM_MS[0] <= ms <= ANIM_MS[1]:
+        raise ValueError(f"spec.ms must be {ANIM_MS[0]}..{ANIM_MS[1]}")
+    loop = spec.get("loop", False)
+    if not isinstance(loop, bool):
+        raise ValueError("spec.loop must be true or false")
+    return ms, loop
+
+
+def _svg_width(html):
+    m = re.search(r'<svg [^>]*width="(\d+)"', html)
+    return int(m.group(1)) if m else 0
+
+
+def _same_shape(base, frames):
+    """Frames can tween (tags glide, cells stay put) when every frame draws the same values."""
+    if base not in ("array", "list"):
+        return False
+    key = lambda f: (json.dumps(f.get("values"), sort_keys=True, default=str),
+                     f.get("cycle_to"))
+    first = key(frames[0][0])
+    return all(key(f) == first for f, _ in frames[1:])
+
+
+def _render_animate(spec):
+    base, frames = _anim_frames(spec)
+    ms, loop = _anim_options(spec)
+    n = len(frames)
+    tween = _same_shape(base, frames)
+    tags = any(f.get("pointers") for f, _ in frames)      # keep the tag row in every frame
+    pics, caps = [], []
+    draw = _RENDER[base]
+    if base == "list":
+        tw = 0
+        for k, (inner, _) in enumerate(frames):
+            try:
+                vals = _list(inner, "values", limit=MAX_ITEMS)
+                at = _pointers(inner, len(vals))
+            except ValueError as e:
+                raise ValueError(f"frame {k + 1}: {e}") from None
+            tw = max([tw] + [len(", ".join(v)) * LL_PTR_CH + 12 for v in at.values()])
+        widths = []
+        for k, (inner, _) in enumerate(frames):
+            try:
+                widths.append(_svg_width(_render_list(inner, tags, tw)))
+            except ValueError as e:
+                raise ValueError(f"frame {k + 1}: {e}") from None
+        mw = max(widths)
+        draw = lambda f: _render_list(f, tags, tw, mw)
+    for k, (inner, cap) in enumerate(frames):
+        try:
+            pic = draw(inner)
+        except ValueError as e:
+            raise ValueError(f"frame {k + 1}: {e}") from None
+        on = " is-on" if k == 0 else ""
+        hid = "" if k == 0 else ' aria-hidden="true"'
+        pics.append(Markup('<div class="viz-frame{}" data-f="{}"{}>{}</div>').format(
+            on, k, Markup(hid), Markup(pic)))
+        caps.append(Markup('<p class="viz-anim-cap{}" data-f="{}"{}>{}</p>').format(
+            on, k, Markup(hid), cap))
+    if base == "array" and tags:
+        pics = [Markup(str(p).replace('class="viz-array"', 'class="viz-array has-ptr"'))
+                for p in pics]
+    bar = Markup(
+        '<div class="viz-anim-bar">'
+        '<button type="button" class="viz-anim-btn" data-act="prev" aria-label="Step back" '
+        'title="Step back (Left)">{prev}</button>'
+        '<button type="button" class="viz-anim-btn viz-anim-play" data-act="play" '
+        'aria-label="Play" title="Play / pause (Space)">{play}</button>'
+        '<button type="button" class="viz-anim-btn" data-act="next" aria-label="Step forward" '
+        'title="Step forward (Right)">{next}</button>'
+        '<input type="range" class="viz-anim-scrub" min="0" max="{last}" step="1" value="0" '
+        'aria-label="Frame">'
+        '<span class="viz-anim-count" aria-hidden="true"><b>1</b>/{n}</span>'
+        '<button type="button" class="viz-anim-btn viz-anim-speed" data-act="speed" '
+        'aria-label="Speed 1x" title="Speed">1x</button>'
+        '</div>').format(prev=_icon("prev"), play=_icon("play"), next=_icon("next"),
+                         last=n - 1, n=n)
+    cap = _caption(spec)
+    label = f"animation, {n} steps" + (f": {cap}" if cap else "")
+    html = Markup(
+        '<figure class="viz viz-anim viz-anim-{base}" tabindex="0" role="group" '
+        'aria-roledescription="animation" aria-label="{label}" data-ms="{ms}" '
+        'data-loop="{loop}" data-n="{n}" data-tween="{tw}">'
+        '<div class="viz-anim-stage">{pics}</div>'
+        '<div class="viz-anim-caps" aria-live="polite">{caps}</div>{bar}{fc}</figure>').format(
+            base=base, label=label, ms=ms, loop="1" if loop else "0", n=n,
+            tw="1" if tween else "0", pics=Markup("").join(pics), caps=Markup("").join(caps),
+            bar=bar, fc=Markup('<figcaption class="viz-cap">{}</figcaption>').format(cap)
+            if cap else "")
+    if len(html) > MAX_ANIM_HTML:
+        raise ValueError("animation too large: fewer frames or smaller inputs")
+    return str(html)
+
+
+def _texts_animate(spec):
+    base, frames = _anim_frames(spec)
+    out = []
+    for inner, cap in frames:
+        out.append(cap)
+        out += texts(base, inner)
+    if spec.get("caption") not in (None, ""):
+        out.append(_fmt(spec["caption"]))
+    return out
+
+
 # ---- public --------------------------------------------------------------------------------
 _RENDER = {"array": _render_array, "grid": _render_grid, "list": _render_list,
            "tree": _render_tree, "steps": _render_steps, "io": _render_io,
-           "html": _render_html}
+           "html": _render_html, "animate": _render_animate}
 
 
 def check_kind(kind):
@@ -585,6 +740,8 @@ def texts(kind, spec):
     the names of pointers/labels; for `html`, the visible text content instead of the markup."""
     kind = check_kind(kind)
     spec = _dict(spec)
+    if kind == "animate":
+        return [t for t in _texts_animate(spec) if t and not t.strip().lstrip("-").isdigit()]
     out = []
 
     def walk(v):

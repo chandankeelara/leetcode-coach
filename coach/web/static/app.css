@@ -532,6 +532,7 @@ body.app-solve .toasts { right: auto; left: var(--s4); bottom: var(--s4); }
 .msg.has-visual { min-width: 0; }
 .msg-body.msg-viz { max-width: 100%; min-width: 0; white-space: normal; padding: 10px 12px; }
 .msg-viz-scroll { max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; }
+.msg-body.msg-viz:has(.viz-anim) { width: min(100%, 560px); }
 .msg-body.viz-cleared { background: none; border-style: dashed; color: var(--text-3); font-size: 13px; padding: 6px 12px; }
 .msg.user { align-items: flex-end; }
 .msg.user .msg-body {
