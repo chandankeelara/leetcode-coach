@@ -298,7 +298,7 @@ on a clock error nothing is posted) (all act on the open handout). Chat side eff
 
 * `next_problem` posts the handoff text (never the mode), then "Statement coming." when
   `paraphrase` is null.
-* `set_statement` posts the statement to the chat on success (nothing on a leak refusal).
+* `set_statement` stores the statement for the Problem tab only; it posts nothing to the chat. The coach explains the question in chat itself (skill: "Explaining the question").
 
 ## Web: Next problem, plan, onboarding
 

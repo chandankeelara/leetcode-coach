@@ -257,10 +257,9 @@ def skip_problem(ctx) -> dict:
 
 @tool
 def set_statement(ctx, handout_id: int, text: str) -> dict:
-    """Write the problem statement, examples and constraints in your own words. Rejected if it names a technique or a difficulty. On success it is also posted to the chat panel."""
+    """Write the problem statement, examples and constraints in your own words. Rejected if it names a technique or a difficulty. It shows in his Problem tab only, never in the chat: explain the question in chat yourself."""
     try:
         ctx.svc.set_statement(ctx.user_id, handout_id, text)
-        ctx.svc.post_message(ctx.user_id, "coach", text.strip(), handout_id=handout_id)
     except ValueError as e:
         return {"error": str(e)}
     return {"ok": True}

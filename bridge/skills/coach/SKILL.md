@@ -83,9 +83,21 @@ Nothing passes anywhere: `say` nothing is eligible today, go to session end.
 
 ### Statement — after every `hand_out`
 If the handoff's `paraphrase` is null, `hand_out` has already posted "Statement coming."
-to the chat. Call `set_statement(handout_id, text)` at once (not a `say`). On success the server
-posts the statement to the chat AND the page shows it above the approach box, so never `say`
-it yourself. If `paraphrase` is already set, skip.
+to the chat. Call `set_statement(handout_id, text)` at once (not a `say`). The statement shows
+in his **Problem tab only** — never paste it into the chat. If `paraphrase` is already set,
+skip writing it. Either way, then do "Explaining the question" below.
+
+### Explaining the question — in the chat, after every statement
+The chat explains the question; it never repeats it. In this order, each its own message:
+1. `say` one plain sentence of what is asked, in your words ("Each call gives today's price;
+   you return how many days in a row, counting today, were at or below it.").
+2. `show_visual` of Example 1 with its input drawn like the statement drawing, and the output
+   as the caption ("output: 2"). For a non-structural input use `io` with one case.
+3. `say` one line on WHY that is the output — restate the rule on that case, never how to
+   compute it. No intermediate state, no pointers, no technique words.
+4. `say` "Anything unclear about the question? If not: your approach in words."
+If he says something is unclear: answer with another example drawn the same way, never a hint.
+In `timed` mode skip 1-3: only step 4.
 
 **What a statement is:** the problem as LeetCode poses it, in your own words, complete enough
 that he never needs to open the link. A faithful restatement, not a summary and not a teaching
