@@ -19,6 +19,9 @@ Env: `COACH_SECRET` signs the session cookie (generated into `.env` on first run
 `COACH_DB` picks the SQLite file (default `./coach.db`). `COACH_DB_URL` takes any SQLAlchemy URL
 and wins over `COACH_DB`. `COACH_USER` picks the local dev bridge's user. `COACH_PUBLIC_URL` (optional) is the
 site URL the `/connect` page puts in the commands (default: the URL the page was opened on).
+`COACH_SIGNUP` (`invite` default, `open`, `closed`) controls `/signup`; make invite codes on
+`/admin/invites` or with `python -m coach.cli invite [--note N]` (details in `docs/DEPLOY.md`; no
+email is sent, verification and password reset come with hosting).
 Students connect their Claude Code with a token from `/connect`: see `bridge/README.md`.
 
 Backup: `./scripts/backup.ps1` (keeps the newest 30).
