@@ -224,6 +224,7 @@ events get no `say` at all: just `wait_for_event()` again.
 | `skip` | `skip_problem()`, then choose again and `hand_out` (then the statement step). A skip still blocks that problem for 7 days. |
 | `next_requested` | he pressed Next problem. Choose and `hand_out` (see "Choosing the next problem"). Say nothing else. |
 | `handout {handout_id, paraphrase, source: "web"}` | he used the default pick (you were offline). Do the statement step now if `paraphrase` is null, then `set_tests`. Say nothing else. |
+| `logged {handout_id, abandoned, source: "web"}` | he logged (or abandoned) the problem himself from the page. Stop coaching it: `reveal`, `score_attempt` with reasons, then "Next problem, or stop for today?" |
 | `timer_over` | `say` the time is up and ask for whatever he has, brute force included. |
 | `clock_checkpoint {pct, elapsed_min, target_min, has_approach}` | see "Clock — you own it". With `phase`: see "Steps of a problem". |
 | `understood {understand_s}` | he pressed "I understand the question". See "Steps of a problem". |

@@ -429,3 +429,14 @@ def test_reveal_shows_the_coach_reason(env, monkeypatch):
 
 def csrf_from(c):
     return re.search(r'X-CSRF-Token": "([^"]+)"', c.get("/log").text).group(1)
+
+
+def test_web_log_tells_the_coach(env):
+    """Logging from the page must reach the coach (2026-10-22: it kept coaching 143)."""
+    c, fake = env
+    login(c)
+    t = start(c)
+    c.post("/log", data={"csrf": t, "actual_min": "5", "bugs": "0", "hints": "0",
+                         "optimal": "yes", "derived_cold": "yes", "abandoned": "1"})
+    logged = [p for k, p in fake.events if k == "logged"]
+    assert logged and logged[-1]["abandoned"] is True and logged[-1]["source"] == "web"

@@ -444,7 +444,8 @@ async def wait_for_event(ctx, timeout_s: int = 1500) -> dict:
     """Block until the learner does something on the website, then return {kind, payload};
     {kind: "timeout"} if nothing came. kind: approach | submission | stuck | skip | chat |
     timer_over | clock_checkpoint | annotation_reply | understood | idle | playground {input,
-    output} (he tried an input in the Problem tab) | prediction {id, correct}. Call it at the END of every turn while he is working. Claude Code may move it
+    output} (he tried an input in the Problem tab) | prediction {id, correct} | logged
+    {handout_id, abandoned} (he logged it himself from the page: stop coaching it). Call it at the END of every turn while he is working. Claude Code may move it
     to the background after ~2 min; that is fine, the result still arrives."""
     return _jsonable(await wait(ctx, timeout_s))
 

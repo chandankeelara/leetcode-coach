@@ -706,6 +706,11 @@ async def log_post(request: Request):
         optimal=form.get("optimal") == "yes", derived_cold=form.get("derived_cold") == "yes",
         hints=num("hints"), notes=(form.get("notes") or "").strip(),
         abandoned=bool(form.get("abandoned")))
+    # The coach only hears the queue: without this it keeps coaching a problem he already
+    # logged from the page (seen 2026-10-22 on 143).
+    service().push_event(sess["uid"], "logged", {
+        "handout_id": h.handout_id, "number": h.number, "abandoned": bool(form.get("abandoned")),
+        "source": "web"})
     return go(f"/reveal/{h.handout_id}")
 
 
