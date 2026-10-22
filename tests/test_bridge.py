@@ -205,9 +205,7 @@ def test_set_statement_tool_ok_and_leak_real_db(real):
     assert service.list_messages(uid) == []                    # a rejected one posts nothing
     assert server.set_statement(hid, "Return indices of two numbers adding to target.") == {"ok": True}
     assert service.get_statement(hid).startswith("Return indices")
-    (msg,) = service.list_messages(uid)
-    assert msg["content"] == "Return indices of two numbers adding to target."
-    assert msg["handout_id"] == hid and msg["role"] == "coach"
+    assert service.list_messages(uid) == []    # Problem tab only: the coach explains it in chat
 
 
 def test_set_statement_tool_described_without_leaks():
