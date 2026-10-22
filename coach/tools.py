@@ -328,7 +328,7 @@ def set_statement(ctx, handout_id: int, text: str) -> dict:
 
 @tool
 def show_visual(ctx, kind: str, spec: dict) -> dict:
-    """Draw something into his discussion thread, as your message: array | grid | list | tree | steps | io | html | animate. animate spec: {base: array|list|tree|grid|steps, frames: [{spec: <a full spec of base>, caption}], loop: false, ms: 1200}, 2-40 frames, played in place with a player. Captions go through the leak guard."""
+    """Draw something into his discussion thread, as your message: array | string | grid | list | tree | graph | intervals | compare | steps | io | html | animate. list takes links/order for relinking; compare = {before:{kind,spec}, after:{kind,spec}, mark_changes}. animate spec: {base: array|string|list|tree|grid|graph|intervals|compare|steps, frames: [{spec: <a full spec of base>, caption}], loop: false, ms: 1200}, 2-40 frames, played in place with a player. Spec lines: skill section "Drawing kinds". To explain the question draw input/output only; how-it-is-built animations only after he logs or when debugging. Captions go through the leak guard."""
     hid = _open_handout(ctx)
     if hid is None:
         return {"error": "no open problem"}

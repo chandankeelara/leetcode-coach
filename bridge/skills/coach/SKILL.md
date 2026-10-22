@@ -371,6 +371,10 @@ while a problem is open, nor right before a handoff. After `reveal` one line is 
   a muted "Illustration cleared." line.
 
 ### Drawing kinds
+**Question vs solution.** To explain the QUESTION, draw only input and output: `compare`
+(before → after) or a still. An animation of HOW the output is built (splitting, reversing,
+weaving, which link moves when) is the solution: use it only after he logs (post-mortem) or
+when debugging HIS code after he asked. Relinking animations are never a question explainer.
 Spec lines for `show_visual` and ```viz blocks (new kinds also work as `animate` bases):
 - `list {values, links: [[from, to|null]], order: [i...] | [[row], [row]], offset: [0, 0.5],
   highlight, pointers, caption}`. `links` replaces the default chain (every node you want an
