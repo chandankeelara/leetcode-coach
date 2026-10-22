@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Connect your coach · Coach{% endblock %}
+{% block body %}
+<section class="auth">
+  <div class="card auth-card welcome-card">
+    <h1>Connect your coach</h1>
+    <p class="sub">Your coach is Claude Code on your computer. It picks your problems, talks to you here and scores your solves. One step links it to your account.</p>
+    <ol class="welcome-steps">
+      <li>Make a token for this computer.</li>
+      <li>Paste one command into a shell.</li>
+      <li>Type <code>/coach</code> in Claude Code.</li>
+    </ol>
+    <div class="welcome-actions">
+      <a class="btn btn-primary btn-lg" href="/connect">Connect your coach</a>
+      <a class="btn btn-quiet" href="/">Later</a>
+    </div>
+  </div>
+</section>
+{% endblock %}

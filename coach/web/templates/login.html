@@ -23,6 +23,9 @@
       </div>
       <button class="btn btn-primary btn-lg" type="submit">Sign in</button>
     </form>
+    {% if signup_mode and signup_mode != "closed" %}
+    <p class="auth-alt">New here? <a href="/signup">Create an account</a></p>
+    {% endif %}
   </div>
 </section>
 {% endblock %}

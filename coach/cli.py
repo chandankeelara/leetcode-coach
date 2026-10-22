@@ -11,6 +11,7 @@
     python -m coach.cli coach-token NAME [--label L]   # prints a new coach token ONCE
     python -m coach.cli coach-token NAME --revoke ID
     python -m coach.cli coach-token NAME --list
+    python -m coach.cli invite [--note N]              # prints a one-use signup code
 
 DB path: env COACH_DB, default ./coach.db. The user is the first (only) user.
 RULE ZERO: `next` prints the Handoff fields and nothing else. `status` is progress talk; never
@@ -106,6 +107,8 @@ def main(argv=None):
     p.add_argument("--label", default="cli")
     p.add_argument("--revoke", type=int, metavar="ID")
     p.add_argument("--list", action="store_true")
+    p = sub.add_parser("invite", help="make a one-use signup invite code")
+    p.add_argument("--note", default="")
     args = ap.parse_args(argv)
 
     db.init()
@@ -173,6 +176,9 @@ def main(argv=None):
             print(t["token"])
             print(f"(token id {t['id']}, label {t['label']!r}; shown once, stored hashed)",
                   file=sys.stderr)
+    elif args.cmd == "invite":
+        from . import signup
+        print(signup.create_invite(None, args.note))
     elif args.cmd == "reveal":
         print(json.dumps(service.reveal(args.handout_id), indent=2))
 

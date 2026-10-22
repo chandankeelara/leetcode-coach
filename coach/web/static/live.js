@@ -21,7 +21,7 @@
   var lastId = null, backoff = 1000, retryT = null, fallbackT = null, errors = 0;
   var FALLBACK_MS = 20000, MAX_BACKOFF = 30000, WATCHDOG_MS = 40000, PARK_MS = 10000;
   var lastSeen = Date.now(), parked = false, hiddenAt = document.hidden ? Date.now() : null;
-  var KINDS = ["hello", "message", "statement", "visual", "editor", "handout", "clock", "presence",
+  var KINDS = ["hello", "message", "statement", "visual", "editor", "handout", "clock", "presence", "rating",
     /* editor tools */ "annotations", "code_ops", "scratch",
     /* tests panel */ "tests", /* keep-alive, never dispatched */ "ping"];
 

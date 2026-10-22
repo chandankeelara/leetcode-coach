@@ -509,7 +509,7 @@ def log_attempt(ctx, handout_id: int, bugs: int, hints: int, optimal: bool, deri
 
 @tool
 def score_attempt(ctx, handout_id: int, parts: dict, summary: str = "") -> dict:
-    """Score his solve, ONCE, after log_attempt (and reveal). parts: {understand, approach, first_submit, quality, time: {score 0-1, why}, hints: {deduction 0-0.3, why}}. Weights 0.10 / 0.25 / 0.30 / 0.15 / 0.20; actual = weighted sum - hints deduction, floor 0 (0 if abandoned). Each why: one plain line, at most 200 characters, no code, no names; shown on his reveal page. summary: one line. The server rates it against the problem (expected, K) and moves his MMR. A second call is refused. Returns actual, expected, delta, before, after, rank, rank_up."""
+    """Score his solve, ONCE, after log_attempt (and reveal). parts: {understand, approach, first_submit, quality, time: {score 0-1, why}, hints: {deduction 0-0.3, why}}. Weights 0.10 / 0.25 / 0.30 / 0.15 / 0.20; actual = weighted sum - hints deduction, floor 0. Abandoned attempts are already scored 0 by the server at log time: score_attempt on one only attaches your reasons and summary (the 0 and the MMR do not change). Each why: one plain line, at most 200 characters, no code, no names; shown on his reveal page. summary: one line. The server rates it against the problem (expected, K) and moves his MMR. A second call is refused. Returns actual, expected, delta, before, after, rank, rank_up."""
     f = getattr(ctx.svc, "score_attempt", None)
     if f is None:
         return {"error": "not supported"}

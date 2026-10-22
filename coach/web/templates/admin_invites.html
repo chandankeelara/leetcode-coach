@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Invites · Coach{% endblock %}
+{% block body %}
+<div class="page">
+  <div class="page-head">
+    <div>
+      <h1>Invites</h1>
+      <p class="sub">Signup is <b>{{ signup_mode }}</b> (env COACH_SIGNUP). A code works once.</p>
+    </div>
+    <div class="grp"><a class="btn btn-quiet" href="/dashboard">Dashboard</a><a class="btn btn-quiet" href="/feedback">Feedback</a></div>
+  </div>
+
+  {% if new %}
+  <div class="token-new" role="status">
+    <h2>New invite</h2>
+    <pre><code data-token id="new-invite">{{ new }}</code></pre>
+    <p>Link: <code>/signup?invite={{ new }}</code></p>
+  </div>
+  {% endif %}
+
+  <form class="inv-new" method="post" action="/admin/invites">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label class="label" for="inv-note">Note</label>
+    <input class="input" id="inv-note" name="note" maxlength="200" placeholder="who it is for">
+    <button class="btn btn-primary" type="submit">New invite code</button>
+  </form>
+
+  <section class="card">
+    <div class="sec-head"><h2>Codes</h2><span class="faint num">{{ invites|length }}</span></div>
+    <div class="sec-body">
+      {% if invites %}
+      <table class="parts inv-table">
+        <thead><tr><th>Code</th><th>Status</th><th>Note</th><th>Created</th><th>Used by</th><th></th></tr></thead>
+        <tbody>
+          {% for i in invites %}
+          <tr data-status="{{ i.status }}">
+            <td><code>{{ i.code }}</code></td>
+            <td><span class="badge {{ 'badge-ok' if i.status == 'used' else ('badge-danger' if i.status == 'revoked' else 'badge-warn') }}">{{ i.status }}</span></td>
+            <td>{{ i.note }}</td>
+            <td>{{ i.created_at.strftime("%Y-%m-%d %H:%M") }}{% if i.created_by_name %} by {{ i.created_by_name }}{% endif %}</td>
+            <td>{% if i.used_by_name %}{{ i.used_by_name }} <span class="faint">{{ i.used_at.strftime("%Y-%m-%d %H:%M") }}</span>{% endif %}</td>
+            <td>{% if i.status == "unused" %}
+              <form method="post" action="/admin/invites/{{ i.raw }}/revoke"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn btn-quiet btn-sm" type="submit">Revoke</button></form>
+              {% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <p class="empty">No codes yet.</p>
+      {% endif %}
+    </div>
+  </section>
+</div>
+{% endblock %}

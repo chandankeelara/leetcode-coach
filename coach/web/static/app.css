@@ -1146,3 +1146,16 @@ body.app-solve .toasts { right: auto; left: var(--s4); bottom: var(--s4); }
 .connect table.tokens th, .connect table.tokens td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); }
 .connect table.tokens tr.muted td { opacity: .55; }
 .connect pre code { white-space: pre-wrap; word-break: break-all; }
+
+/* ---- signup, welcome step, invites (signup branch) ---- */
+.auth-alt { margin-top: var(--s5); color: var(--text-2); font-size: var(--t-sm); text-align: center; }
+.auth-alt a { color: var(--text); text-decoration: underline; text-underline-offset: 3px; }
+.auth-form .hint { margin-top: 4px; color: var(--text-3); font-size: 12px; }
+.welcome-card { width: min(460px, 100%); }
+.welcome-steps { margin: var(--s5) 0 0; padding-left: 20px; display: grid; gap: var(--s2); color: var(--text-2); }
+.welcome-actions { margin-top: var(--s6); display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; }
+.inv-new { display: flex; align-items: end; gap: var(--s3); flex-wrap: wrap; margin: var(--s5) 0; }
+.inv-new .label { width: 100%; }
+.inv-new .input { flex: 1 1 240px; }
+.inv-table td, .inv-table th { vertical-align: middle; }
+.inv-table form { margin: 0; }

@@ -1,6 +1,8 @@
 {% extends "base.html" %}
 {% block title %}{{ r.number }}. {{ r.title }} · Reveal · Coach{% endblock %}
 {% block head %}<link rel="stylesheet" href="/static/rating.css">{% endblock %}
+{% block scripts %}<script src="/static/live.js"></script>
+<script src="/static/reveal.js"></script>{% endblock %}
 {% set oc = outcome or a.outcome or "" %}
 {% set ocls = {"clean": "badge-ok", "solved": "badge-warn", "abandoned": "badge-danger"} %}
 {% block body %}
@@ -92,60 +94,9 @@
       </div>
     </section>
     {% endif %}
-    {% if not rt and r.score_pending %}
-    <section class="card rv-rating" id="rv-rating-pending">
-      <div class="sec-head"><h2>Rating</h2><span class="sec-note">pending</span></div>
-      <div class="sec-body"><p class="mmr-ev">Your coach is scoring this solve. Reload in a moment.</p></div>
-    </section>
-    {% endif %}
-    {% if rt %}
-    {% set names = {"understand": "Understood in time", "approach": "Own approach, in time", "first_ac": "First submit accepted", "quality": "Optimal, checker clean", "time": "Total time"} %}
-    {% set coach_names = {"understand": "Understood the question", "approach": "The idea was his", "first_submit": "First submit", "quality": "Optimal, clean code", "time": "Total time"} %}
-    <section class="card rv-rating" data-dir="{{ 'up' if rt.delta >= 0 else 'down' }}" id="rv-rating">
-      <div class="sec-head"><h2>Rating</h2>
-        {% if rt.rank_up %}<span class="rank-up">Rank up! {{ rt.rank }}</span>{% elif rt.rank_down %}<span class="rank-down">Down to {{ rt.rank }}</span>{% endif %}
-      </div>
-      <div class="sec-body">
-        <div class="mmr-line">
-          <span class="rank-badge rank-{{ rt.rank|lower }}">{{ rt.rank }}</span>
-          <span class="mmr-move"><span class="mmr-before">{{ rt.before }}</span><span class="mmr-arrow" aria-hidden="true">→</span><span class="mmr-after">{{ rt.after }}</span></span>
-          <span class="mmr-delta">{{ "%+.1f"|format(rt.delta) }}</span>
-        </div>
-        <p class="mmr-ev">Expected <b>{{ (rt.expected * 100)|round|int }}%</b>, scored <b>{{ (rt.actual * 100)|round|int }}%</b> against a problem rated <b>{{ rt.problem_rating }}</b>.{% if rt.next_rank_at %} {{ rt.next_rank_at.mmr - rt.after }} to {{ rt.next_rank_at.rank }}.{% endif %}</p>
-        {% set bd = rt.breakdown or {} %}
-        {% if rt.scored_by == "coach" %}
-        <p class="rv-scored-by" id="rv-scored-by"><span class="badge plain">scored by your coach</span></p>
-        {% if rt.summary %}<p class="rv-score-summary">{{ rt.summary }}</p>{% endif %}
-        <table class="parts parts-coach">
-          <thead><tr><th>Part</th><th class="num">Weight</th><th class="num">Score</th><th class="num">Points</th></tr></thead>
-          <tbody>
-            {% for k in ["understand", "approach", "first_submit", "quality", "time"] %}{% set p = (bd.parts or {}).get(k) %}{% if p %}
-            <tr class="{{ 'full' if p.score >= 1 else ('none' if p.score <= 0 else 'part') }}"><td>{{ coach_names[k] }}<span class="part-why">{{ p.why }}</span></td><td class="num">{{ (p.weight * 100)|round|int }}</td><td class="num">{{ (p.score * 100)|round|int }}%</td><td class="num">{{ "%.2f"|format(p.points) }}</td></tr>
-            {% endif %}{% endfor %}
-            {% set hp = bd.hints or {} %}
-            <tr class="{{ 'none' if hp.deduction else 'full' }}"><td>Hints<span class="part-why">{{ hp.why }}</span></td><td class="num"></td><td class="num"></td><td class="num">{{ "-%.2f"|format(hp.deduction) if hp.deduction else "0" }}</td></tr>
-            {% if bd.abandoned %}<tr class="none"><td>Abandoned</td><td class="num"></td><td class="num"></td><td class="num">0</td></tr>{% endif %}
-          </tbody>
-          <tfoot><tr><td>Actual</td><td></td><td></td><td class="num">{{ "%.2f"|format(rt.actual) }}</td></tr></tfoot>
-        </table>
-        {% else %}
-        <p class="rv-scored-by"><span class="badge plain">scored by formula</span></p>
-        <table class="parts">
-          <thead><tr><th>Part</th><th class="num">Weight</th><th class="num">Score</th><th class="num">Points</th></tr></thead>
-          <tbody>
-            {% for k in ["understand", "approach", "first_ac", "quality", "time"] %}{% set p = (bd.parts or {}).get(k) %}{% if p %}
-            <tr class="{{ 'full' if p.score >= 1 else ('none' if p.score <= 0 else 'part') }}"><td>{{ names[k] }}</td><td class="num">{{ (p.weight * 100)|round|int }}</td><td class="num">{{ (p.score * 100)|round|int }}%</td><td class="num">{{ "%.2f"|format(p.points) }}</td></tr>
-            {% endif %}{% endfor %}
-            {% if bd.hint_penalty %}<tr class="none"><td>Hints</td><td class="num"></td><td class="num"></td><td class="num">-{{ "%.2f"|format(bd.hint_penalty) }}</td></tr>{% endif %}
-            {% if bd.abandoned %}<tr class="none"><td>Abandoned</td><td class="num"></td><td class="num"></td><td class="num">0</td></tr>{% endif %}
-          </tbody>
-          <tfoot><tr><td>Actual</td><td></td><td></td><td class="num">{{ "%.2f"|format(rt.actual) }}</td></tr></tfoot>
-        </table>
-        {% endif %}
-        {% if r.problem_rating and r.problem_rating.why %}<p class="rv-budget-why"><span class="eyebrow">Problem rating</span> {{ r.problem_rating.why }}</p>{% endif %}
-      </div>
-    </section>
-    {% endif %}
+    <div class="rv-rating-slot" id="rv-rating-slot" data-handout="{{ hid }}" data-pending="{{ 1 if (r.score_pending and not rt) else 0 }}">
+    {% include "_rating_card.html" %}
+    </div>
   </div>
   {% endif %}
 

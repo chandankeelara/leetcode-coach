@@ -12,6 +12,8 @@ Three ways to run the web app. The MCP bridge (Claude Code side) always runs on 
 | `COACH_ENV_FILE` | web | Where the generated secret is stored. Docker image: `/data/.env`. |
 | `COACH_USER` | bridge | Username the bridge acts as. Unset = the first user. |
 | `COACH_PASSWORD` | CLI | Non-interactive `create-user`. |
+| `COACH_SIGNUP` | web | Who may create an account at `/signup`: `invite` (default, needs a code), `open` (anyone), `closed` (page says so, POST refused). |
+| `COACH_TRUST_PROXY` | web | `1` = the signup rate limit reads the client address from the first `X-Forwarded-For`. Set it only behind a proxy you control. |
 | `PORT` | Docker | Listen port, default 8731. |
 
 ## 1. Local (Windows)
@@ -101,3 +103,21 @@ It would call an authenticated API (`wait_for_event`, `say`, `next_problem`, `lo
 instead of opening the DB file. That API and the token auth do not exist yet. Until they do, a
 hosted web app is only useful if the bridge reaches the same Postgres through `COACH_DB_URL`,
 which exposes the database to the internet. Prefer local use for now.
+
+## Signup and invites
+
+`/signup` takes username (3-24 of `a-z0-9_`), email, password (10+ characters, two kinds, not the
+username) and a repeat. On success the user is created (argon2), logged in and sent to
+`/onboarding`; the first visit to `/` afterwards shows a one-time "Connect your coach" step that
+links `/connect`.
+
+- `COACH_SIGNUP=invite` (default): the form needs an invite code. Make one on `/admin/invites`
+  (admin only; it also lists usage and revokes unused codes) or with
+  `python -m coach.cli invite --note "for sam"`. A code works once; the link
+  `/signup?invite=CODE` pre-fills it.
+- `COACH_SIGNUP=open`: no code. `COACH_SIGNUP=closed`: no signups, the login page hides the link.
+- Each IP gets 5 signup attempts an hour (in memory, per process; a restart resets it).
+- **No email is sent.** The address is stored (lowercase, unique) for later: email verification
+  and password reset come with hosting. Until then an admin resets a password with the CLI.
+- The schema change is additive: `users.email` plus a partial unique index, and the `invites`
+  table, are created on start (existing databases are migrated in place).

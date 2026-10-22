@@ -60,6 +60,8 @@ def score_attempt(user_id, handout_id, parts, summary=""):
         texts = [str((v or {}).get("why") or "") for v in parts.values()
                  if isinstance(v, dict)] + [str(summary or "")]
         _guard(texts, u.username if u else None)
+        from .service import emit
+        emit(user_id, "rating", h.id, s)         # the open reveal page fills its rating card
         d = rating.event_dict(ev)
         out = {k: d[k] for k in ("attempt_id", "scored_by", "actual", "expected", "delta",
                                  "before", "after", "rank", "rank_up", "rank_down")}
