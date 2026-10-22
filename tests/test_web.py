@@ -8,7 +8,9 @@ from coach.web import app as webapp
 from tests.fake_service import FakeService
 
 FORBIDDEN = [p for p in TIER1 + TIER2] + [p.replace("-", " ") for p in TIER1 + TIER2] + [
-    "slot", "tier", "backlog", "streak", "easy", "medium", "hard"]
+    "slot", "tier", "backlog", "streak", "easy", "medium", "hard",
+    # rating (coach/rating.py) is progress talk too: never on /, /solve, /log
+    "mmr", "rank", "rating", "bronze", "silver", "gold", "platinum", "diamond"]
 
 
 def visible_text(html):
