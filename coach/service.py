@@ -15,7 +15,8 @@ from argon2.exceptions import InvalidHashError, VerificationError
 from sqlalchemy import delete, select
 
 from . import clock as clk
-from . import picker, plans, rules, state
+from . import picker, plans, rating, rules, state
+from . import steps as stp
 from .catalog import default_target, pattern_name, pattern_tier
 from .db import session_scope
 from .models import (Annotation, Attempt, Burned, ClockEvent, CoachMessage, CodeDraft, Config,
@@ -233,7 +234,8 @@ def _clock_events(s, handout_id):
                           .order_by(ClockEvent.id)))
 
 
-def clock(user_id, handout_id, action, reason="", target_min=None, label=None, now=None):
+def clock(user_id, handout_id, action, reason="", target_min=None, label=None, now=None,
+          force=False):
     """The coach owns the clock. action: start | pause | resume | reset | target | phase.
       start   running from now (no-op if running; sets first_started_at if unset)
       pause   bank elapsed, freeze. No reason -> stored "" and a "warning": "say why"
@@ -244,6 +246,10 @@ def clock(user_id, handout_id, action, reason="", target_min=None, label=None, n
       target  target_min = 1..180; checkpoints re-arm
       phase   neutral label next to the timer ("approach", "code"); leak-guarded like a
               statement: ValueError("leak: ...") and nothing stored. "" clears it.
+              A handout WITH steps (phase_budget): label must be understand | approach |
+              code. Leaving `understand` is the student's button (service.understood); the
+              coach may only do it with force=True ("he said in chat he understood and the
+              button failed"). Going back to understand also needs force.
     Every action writes a clock_events row and emits `clock`. ValueError unless the handout
     is his and open, or on a bad action/target. Returns clock.state(...) + handout_id
     (+ "warning")."""
@@ -270,6 +276,8 @@ def clock(user_id, handout_id, action, reason="", target_min=None, label=None, n
             h.clock_accum_s, h.clock_anchor, h.clock_state = 0, now, "running"
             h.handed_at = now
             h.checkpoints_fired = []
+            if stp.has_steps(h):
+                stp.on_reset(h)
             if not reason:
                 warning = "say why"
         elif action == "target":
@@ -281,9 +289,32 @@ def clock(user_id, handout_id, action, reason="", target_min=None, label=None, n
                 raise ValueError("target needs target_min, an int 1..180") from None
             if not clk.TARGET_MIN <= n <= clk.TARGET_MAX:
                 raise ValueError("target_min must be 1..180")
+            if stp.has_steps(h):          # the code step absorbs the change; sum = target
+                b = dict(h.phase_budget)
+                code = n - b["understand"] - b["approach"]
+                if code < 1:
+                    raise ValueError(f"target {n} leaves no time for the code step "
+                                     f"(understand {b['understand']} + approach "
+                                     f"{b['approach']})")
+                b["code"] = code
+                h.phase_budget = b
+                h.phase_fired = [x for x in (h.phase_fired or []) if x != "code"]
             h.target_min = n
             h.checkpoints_fired = []
             value = {"target_min": n}
+        elif action == "phase" and stp.has_steps(h):
+            text = (label or "").strip().lower()
+            if text not in stp.PHASES:
+                raise ValueError("phase: one of understand | approach | code for this problem")
+            cur = stp.current(h)
+            if text != cur:
+                if (cur == "understand" or text == "understand") and not force:
+                    raise ValueError("the student ends the understand step with his button; "
+                                     "force=true only if he said in chat he understood and "
+                                     "the button failed")
+                stp.move(h, text, now)
+            value = {"label": text, "by": "coach", "force": bool(force),
+                     "seconds": stp.seconds(h, now)}
         elif action == "phase":
             text = re.sub(r"\s+", " ", (label or "")).strip()
             if len(text) > 40:
@@ -299,6 +330,7 @@ def clock(user_id, handout_id, action, reason="", target_min=None, label=None, n
         s.flush()
         emit(user_id, "clock", h.id, s)
         out = clk.state(h, now, _clock_events(s, h.id))
+        out["steps"] = stp.state(h, now)
         out["handout_id"] = h.id
         if warning:
             out["warning"] = warning
@@ -313,8 +345,38 @@ def clock_state(user_id, handout_id, now=None):
         if h is None or h.user_id != user_id:
             return None
         out = clk.state(h, now, _clock_events(s, h.id))
+        out["steps"] = stp.state(h, now)
         out["handout_id"] = h.id
         return out
+
+
+def understood(user_id, handout_id, now=None):
+    """The student pressed "I understand the question": the understand step ends (its time is
+    banked), the approach step starts, an `understood` event goes to the coach, `clock` is
+    emitted. Idempotent once past understand. ValueError unless his, open and with steps.
+    Returns {"ok", "phase", "understand_s", "already"}."""
+    now = now or datetime.now()
+    with session_scope() as s:
+        h = s.get(Handout, handout_id)
+        if h is None or h.user_id != user_id or h.status != "open":
+            raise ValueError(f"no open handout {handout_id}")
+        if not stp.has_steps(h):
+            raise ValueError("this problem has no steps")
+        _materialize_clock(h)
+        if stp.current(h) != "understand":
+            return {"ok": True, "phase": stp.current(h), "already": True,
+                    "understand_s": stp.seconds(h, now)["understand"]}
+        secs = stp.move(h, "approach", now)
+        s.add(ClockEvent(user_id=user_id, handout_id=h.id, action="phase", at=now,
+                         reason="he understood the question",
+                         value={"label": "approach", "by": "student", "seconds": secs}))
+        s.add(Event(user_id=user_id, kind="understood", payload={
+            "handout_id": h.id, "understand_s": secs["understand"],
+            "understand_budget_min": (h.phase_budget or {}).get("understand")}))
+        s.flush()
+        emit(user_id, "clock", h.id, s)
+        return {"ok": True, "phase": "approach", "already": False,
+                "understand_s": secs["understand"]}
 
 
 def clock_record(s, h, end=None):
@@ -345,16 +407,88 @@ def _fire_checkpoints(user_id, now=None):
         if h is None:
             return None
         due = clk.due_checkpoints(h, now)
-        if not due:
+        step = stp.due_phase_checkpoint(h, now)
+        if not due and not step:
             return None
-        h.checkpoints_fired = sorted(set(h.checkpoints_fired or []) | set(due))
         appr = s.scalars(select(Event).where(
             Event.user_id == user_id, Event.kind == "approach",
             Event.created_at >= clk.first_started(h) - timedelta(seconds=2)))
         has_approach = any((e.payload or {}).get("handout_id") == h.id for e in appr)
-        e = Event(user_id=user_id, kind="clock_checkpoint", payload={
-            "pct": max(due), "elapsed_min": round(clk.elapsed_s(h, now) / 60),
-            "target_min": h.target_min, "has_approach": has_approach})
+        ids = []
+        if due:
+            h.checkpoints_fired = sorted(set(h.checkpoints_fired or []) | set(due))
+            e = Event(user_id=user_id, kind="clock_checkpoint", payload={
+                "pct": max(due), "elapsed_min": round(clk.elapsed_s(h, now) / 60),
+                "target_min": h.target_min, "has_approach": has_approach})
+            s.add(e)
+            s.flush()
+            ids.append(e.id)
+        if step:
+            # per step: once, when the current step passes 100% of its budget
+            h.phase_fired = list(h.phase_fired or []) + [step]
+            e = Event(user_id=user_id, kind="clock_checkpoint", payload={
+                "phase": step, "pct": 100,
+                "phase_min": round(stp.seconds(h, now)[step] / 60),
+                "phase_budget_min": h.phase_budget.get(step),
+                "elapsed_min": round(clk.elapsed_s(h, now) / 60),
+                "target_min": h.target_min, "has_approach": has_approach,
+                "mode": picker.handout_mode(h)})
+            s.add(e)
+            s.flush()
+            ids.append(e.id)
+        return ids[0]
+
+
+# What counts as him doing something (idle check). Every other `events` kind is the server's.
+STUDENT_EVENT_KINDS = ("approach", "chat", "submission", "stuck", "run", "understood",
+                       "annotation_reply", "abandon", "skip", "next_requested")
+
+
+def last_activity(s, h):
+    """When he last did something on this handout: a draft change, a message, one of his
+    events, a test run, a box reply; or the clock (re)starting."""
+    from .models import Annotation, CodeDraft, TestRun
+    since = clk.first_started(h)
+    marks = [since, h.handed_at, clk.anchor(h)]
+    marks.append(s.scalars(select(CodeDraft.updated_at).where(
+        CodeDraft.handout_id == h.id)).first())
+    marks.append(s.scalars(select(CoachMessage.created_at).where(
+        CoachMessage.user_id == h.user_id, CoachMessage.role == "user",
+        CoachMessage.created_at >= since).order_by(CoachMessage.id.desc())).first())
+    for e in s.scalars(select(Event).where(
+            Event.user_id == h.user_id, Event.kind.in_(STUDENT_EVENT_KINDS),
+            Event.created_at >= since).order_by(Event.id.desc()).limit(50)):
+        if (e.payload or {}).get("handout_id") in (None, h.id):
+            marks.append(e.created_at)
+            break
+    marks.append(s.scalars(select(TestRun.created_at).where(
+        TestRun.handout_id == h.id, TestRun.who == "user")
+        .order_by(TestRun.id.desc())).first())
+    marks.append(s.scalars(select(Annotation.reply_at).where(
+        Annotation.handout_id == h.id, Annotation.reply_at.is_not(None))
+        .order_by(Annotation.reply_at.desc())).first())
+    return max(m for m in marks if m is not None)
+
+
+def _fire_idle(user_id, now=None):
+    """Called from wait_event's loop: push ONE `idle {handout_id, phase, idle_s}` when, on his
+    open handout with a running clock, nothing came from him for steps.IDLE_S seconds. Fired
+    once per quiet stretch; his next activity re-arms it. Returns the event id or None."""
+    now = now or datetime.now()
+    with session_scope() as s:
+        h = s.scalars(select(Handout).where(
+            Handout.user_id == user_id, Handout.status == "open",
+            Handout.slot != "imported").order_by(Handout.id.desc())).first()
+        if h is None or not clk.running(h):
+            return None
+        last = last_activity(s, h)
+        idle = (now - last).total_seconds()
+        if idle < stp.IDLE_S or h.idle_mark == last:
+            return None
+        h.idle_mark = last
+        e = Event(user_id=user_id, kind="idle", payload={
+            "handout_id": h.id, "phase": stp.current(h) or h.phase_label,
+            "idle_s": int(idle)})
         s.add(e)
         s.flush()
         return e.id
@@ -719,6 +853,7 @@ def _log_attempt(user_id, handout_id=None, number=None, actual_min=None, bugs=0,
         prob = s.get(Problem, number)
         if prob is None:
             raise ValueError(f"unknown problem {number}; add it to the problems table first")
+        rating.ensure(s, user_id)            # placement replay before this attempt counts
         if target_min is None:
             target_min = h.target_min if h else default_target(prob.difficulty)
         now = datetime.now()
@@ -726,6 +861,10 @@ def _log_attempt(user_id, handout_id=None, number=None, actual_min=None, bugs=0,
         if h is not None:
             wall_min = round(clk.wall_s(h, now) / 60)
             clock_note = clk.note(clk.record(_clock_events(s, h.id), now)) or None
+            if stp.has_steps(h) and h.status == "open":
+                _materialize_clock(h)
+                h.phase_elapsed = stp.seconds(h, now)        # freeze the step times
+                h.phase_start_s = clk.elapsed_s(h, now)
             if actual_min is None:
                 actual_min = max(1, round(clk.elapsed_s(h, now) / 60))
         if actual_min is None:
@@ -772,9 +911,12 @@ def _log_attempt(user_id, handout_id=None, number=None, actual_min=None, bugs=0,
             action = "added"
 
         _update_pattern_state(s, user_id, prob.pattern_slug, h, day)
+        ev = rating.apply(s, att)
+        r = rating.event_dict(ev)
         return {"attempt_id": att.id, "outcome": result, "retry": action,
                 "problem_number": number, "actual_min": actual_min, "wall_min": wall_min,
-                "clock_note": clock_note}
+                "clock_note": clock_note,
+                "rating": {k: r[k] for k in ("before", "after", "delta", "rank", "rank_up")}}
 
 
 def _update_pattern_state(s, user_id, slug, handout, day):
@@ -876,7 +1018,44 @@ def reveal(handout_id):
         if h.slot == "refire" and slug:
             out["trap_quiz"] = trap_quiz(h.user_id, slug, s)
         out["clock"] = clock_record(s, h)
+        out["steps"] = _steps_record(h)
+        out["budget_reason"] = h.budget_reason
+        out["problem_rating"] = {"rating": rating.problem_rating(p),
+                                 "rated": p.rating is not None, "why": p.rating_reason}
+        a = s.scalars(select(Attempt).where(Attempt.handout_id == h.id)
+                      .order_by(Attempt.id.desc())).first()
+        ev = None
+        if a is not None:
+            from .models import RatingEvent
+            ev = s.scalars(select(RatingEvent).where(RatingEvent.attempt_id == a.id)).first()
+        out["rating"] = rating.event_dict(ev)
+        if ev is not None:
+            nxt = rating.next_rank_at(ev.after)
+            out["rating"]["next_rank_at"] = nxt
         return out
+
+
+def _steps_record(h):
+    """[{phase, label, minutes, budget_min, over}] of a handout with steps, else None."""
+    if not stp.has_steps(h):
+        return None
+    secs = {k: int((h.phase_elapsed or {}).get(k, 0)) for k in stp.PHASES}
+    return [{"phase": k, "label": stp.TITLES[k], "seconds": secs[k],
+             "minutes": round(secs[k] / 60, 1), "budget_min": h.phase_budget.get(k),
+             "over": secs[k] > h.phase_budget.get(k, 0) * 60} for k in stp.PHASES]
+
+
+def get_rating(user_id):
+    """The coach's rating block: {mmr, rank, games, next_rank_at, to_next, recent_deltas}.
+    Progress talk: never quote it while a problem is open."""
+    with session_scope() as s:
+        return rating.block(s, user_id)
+
+
+def rating_history(user_id, n=20):
+    """Dashboard: the rating block with the last `n` deltas."""
+    with session_scope() as s:
+        return rating.block(s, user_id, recent=n)
 
 
 def _picked_by(h):
@@ -997,6 +1176,7 @@ async def wait_event(user_id, timeout_s=25.0, poll_s=0.25):
         if checked is None or loop.time() - checked >= CHECKPOINT_EVERY_S:
             checked = loop.time()
             _fire_checkpoints(user_id)
+            _fire_idle(user_id)
         got = _drain(user_id)
         if got:
             return got
@@ -1028,6 +1208,17 @@ def _set_editor(user_id, handout_id, on, message=None):
         if h is None or h.user_id != user_id:
             return {"ok": False, "error": "no such handout"}
         h.editor_open = on
+        # steps: unlock moves approach -> code, lock moves code -> approach
+        if stp.has_steps(h) and h.status == "open":
+            cur, to = stp.current(h), ("code" if on else "approach")
+            if cur == ("approach" if on else "code"):
+                now = datetime.now()
+                _materialize_clock(h)
+                secs = stp.move(h, to, now)
+                s.add(ClockEvent(user_id=user_id, handout_id=h.id, action="phase", at=now,
+                                 reason="editor opened" if on else "editor locked",
+                                 value={"label": to, "by": "editor", "seconds": secs}))
+                emit(user_id, "clock", h.id, s)
         emit(user_id, "editor", h.id, s)
     if message:
         post_message(user_id, "coach", message, handout_id=handout_id)
@@ -1189,7 +1380,12 @@ def session_summary(user_id, today=None):
                 rv = {"slot": h.slot, "pattern": slug, "picked_by": _picked_by(h),
                       "why": h.pick_reason,
                       "pattern_name": pattern_name(slug) if slug else None,
-                      "tier": pattern_tier(slug) if slug else None}
+                      "tier": pattern_tier(slug) if slug else None,
+                      "budget_reason": h.budget_reason, "steps": _steps_record(h)}
+                if a is not None:
+                    from .models import RatingEvent
+                    rv["rating"] = rating.event_dict(s.scalars(select(RatingEvent).where(
+                        RatingEvent.attempt_id == a.id)).first())
             subs = list(s.scalars(select(Submission).where(Submission.handout_id == h.id)
                                   .order_by(Submission.id)))
             problems.append({
@@ -1248,3 +1444,9 @@ UI_KINDS = UI_KINDS | TESTS_UI_KINDS        # emit() reads the module global at 
 from .plans import get_plan, pattern_choices, set_plan  # noqa: E402
 from .picks import (PickRefused, find_problems, get_due, get_profile, hand_out,  # noqa: E402
                     skip_open)
+
+
+# ---- rating, problem hardness, feedback to the dev team (coach/rating.py, coach/feedback.py) --
+from .picks import rate_problem  # noqa: E402
+from .feedback import (is_admin, list_requests, record_friction,  # noqa: E402
+                       request_feature, set_status as set_request_status)

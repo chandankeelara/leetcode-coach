@@ -46,6 +46,13 @@ def init(path=None):
     from . import plans
     with session_scope() as s:
         plans.migrate_legacy(s)
+    # Data migration: placement MMR for users with history (coach/rating.py), and the owner
+    # account is admin (/feedback) unless set otherwise.
+    from . import rating
+    with session_scope() as s:
+        rating.migrate(s)
+        s.execute(text("UPDATE users SET is_admin = :t WHERE username = :u AND is_admin IS NULL"),
+                  {"t": True, "u": os.environ.get("COACH_ADMIN", "chandan")})
     return _engine
 
 

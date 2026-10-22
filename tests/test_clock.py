@@ -317,9 +317,10 @@ def bridge(opened):
 def test_bridge_clock_tool(bridge):
     server, uid, hid = bridge
     tools = {t.name: t for t in asyncio.run(server.mcp.list_tools())}
-    assert tools["clock"].description.strip() == ("Control his clock: start | pause | resume | "
-                                                  "reset | target | phase. Say why in chat "
-                                                  "when you pause or reset.")
+    assert tools["clock"].description.strip().startswith(
+        "Control his clock: start | pause | resume | reset | target | phase. Say why in chat "
+        "when you pause or reset.")
+    assert "force=true only if he said in chat he understood" in tools["clock"].description
     r = server.clock("pause", reason="float precision")
     assert r["state"] == "paused" and r["handout_id"] == hid
     assert server.clock("target", target_min=14)["target_min"] == 14

@@ -23,6 +23,8 @@ class User(Base):
     # Coach presence heartbeat (UTC iso): written by every authenticated coach call and every
     # wait_event poll for THIS user. See service.coach_seen / coach_online.
     coach_last_seen: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    # May open /feedback (the coach_requests list). db.init sets it for the owner account.
+    is_admin: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
 
 class Plan(Base):
@@ -63,6 +65,11 @@ class Problem(Base):
     bank_group: Mapped[str | None] = mapped_column(String(128), nullable=True)
     bank_order: Mapped[int | None] = mapped_column(Integer, nullable=True)   # position in the pool
     reproduction: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Per-problem hardness (coach/rating.py): set ONCE by the coach (rate_problem), clamped to
+    # the band of `difficulty`. NULL = the band default. Never shown to him before he logs.
+    rating: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    rating_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    rated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class CoachSession(Base):
@@ -102,6 +109,15 @@ class Handout(Base):
     # after the attempt is logged (reveal, session_summary).
     mode: Mapped[str | None] = mapped_column(String(8), nullable=True)      # timed|coached
     pick_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Steps of a problem (coach/steps.py): {understand, approach, code} minutes; NULL = the old
+    # single clock with a free phase label. The current step is phase_label. phase_elapsed:
+    # {step: banked seconds}; phase_start_s: coach-clock seconds when the current step began.
+    phase_budget: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    phase_elapsed: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    phase_start_s: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    phase_fired: Mapped[list | None] = mapped_column(JSON, nullable=True)   # steps past budget
+    budget_reason: Mapped[str | None] = mapped_column(Text, nullable=True)   # private until logged
+    idle_mark: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # idle fired for
 
 
 class Attempt(Base):
@@ -392,6 +408,57 @@ class Submission(Base):
     verdict: Mapped[str | None] = mapped_column(String(32), nullable=True)
     judged: Mapped[object] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+# ---- rating (coach/rating.py) ---------------------------------------------------------------
+class Rating(Base):
+    """A learner's MMR. One row per user; created by placement (replay of his attempts)."""
+    __tablename__ = "ratings"
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    mmr: Mapped[float] = mapped_column(Float, default=1200.0)
+    games: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class RatingEvent(Base):
+    """One rated attempt (a "match" against the problem's rating). attempt_id unique: an
+    attempt changes the rating once."""
+    __tablename__ = "rating_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    attempt_id: Mapped[int] = mapped_column(ForeignKey("attempts.id"), unique=True)
+    before: Mapped[float] = mapped_column(Float)
+    after: Mapped[float] = mapped_column(Float)
+    delta: Mapped[float] = mapped_column(Float)
+    expected: Mapped[float] = mapped_column(Float)
+    actual: Mapped[float] = mapped_column(Float)
+    k: Mapped[int] = mapped_column(Integer)
+    problem_rating: Mapped[int] = mapped_column(Integer)
+    breakdown: Mapped[object] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+# ---- feedback to the dev team (coach/feedback.py) -------------------------------------------
+class CoachRequest(Base):
+    """What the coach (model) asked the dev team for, or a tool that failed it. kind: feature |
+    friction | bug. severity: blocked | workaround | nice. status: open | planned | done.
+    Deduped by key (normalised title + tool): repeats bump count / last_at. No student code."""
+    __tablename__ = "coach_requests"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    session_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    handout_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    kind: Mapped[str] = mapped_column(String(16))
+    key: Mapped[str] = mapped_column(String(300), index=True)
+    title: Mapped[str] = mapped_column(String(200))
+    why: Mapped[str] = mapped_column(Text, default="")
+    example: Mapped[str] = mapped_column(Text, default="")
+    severity: Mapped[str] = mapped_column(String(16), default="nice")
+    tool: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    count: Mapped[int] = mapped_column(Integer, default=1)
+    first_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    last_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    status: Mapped[str] = mapped_column(String(16), default="open")
 
 
 class CoachToken(Base):

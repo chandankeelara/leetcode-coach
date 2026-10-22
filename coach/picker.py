@@ -201,9 +201,10 @@ def pick_next(s, user_id, today):
 
 
 def create_handout(s, user_id, today, problem, slot, pattern, target_min=None, mode=None,
-                   pick_reason=None):
+                   pick_reason=None, phase_budget=None, budget_reason=None):
     """Write a handouts row stamped now by the SERVER clock and start the coach's clock.
-    Returns the Handout row."""
+    phase_budget {understand, approach, code}: the handout has steps and starts in
+    `understand` (coach/steps.py). Returns the Handout row."""
     sess = state.current_session(s, user_id, today)
     at = datetime.combine(today, datetime.now().time())
     h = Handout(
@@ -213,11 +214,18 @@ def create_handout(s, user_id, today, problem, slot, pattern, target_min=None, m
         clock_state="running", clock_anchor=at, clock_accum_s=0, first_started_at=at,
         checkpoints_fired=[], mode=mode, pick_reason=pick_reason,
     )
+    if phase_budget:
+        h.phase_budget = dict(phase_budget)
+        h.phase_label = "understand"
+        h.phase_elapsed = {"understand": 0, "approach": 0, "code": 0}
+        h.phase_start_s = 0
+        h.phase_fired = []
+        h.budget_reason = budget_reason
     s.add(h)
     s.flush()
     # the server starts the coach's clock at handout
     s.add(ClockEvent(user_id=user_id, handout_id=h.id, action="start", at=at, reason="handout",
-                     value={"target_min": h.target_min}))
+                     value={"target_min": h.target_min, "phase_budget": h.phase_budget}))
     return h
 
 

@@ -14,7 +14,8 @@ from datetime import date
 
 from sqlalchemy import select
 
-from . import picker, rules, state
+from . import picker, rating, rules, state
+from . import steps as stp
 from .catalog import pattern_name
 from .db import session_scope
 from .models import Burned, Handout, Pattern, Problem
@@ -154,14 +155,20 @@ def get_profile(user_id, today=None):
                            "outcome": a.outcome, "target_min": a.target_min,
                            "actual_min": a.actual_min, "bugs": a.bugs, "hints": a.hints,
                            "optimal": a.optimal, "derived_cold": a.derived_cold,
-                           "notes": a.notes})
+                           "notes": a.notes,
+                           "problem_rating": rating.problem_rating(p) if p else None})
         ledger = [{"name": k.name, "kind": k.kind, "pattern": k.pattern_slug, "level": k.level,
                    "trend": k.trend, "evidence": k.evidence,
                    "updated_on": k.updated_on.isoformat() if k.updated_on else None}
                   for k in sorted(c.skills, key=lambda k: (k.level, k.name))]
         bl = rules.backlog(c.atts, today, c.cfg["backlog_start"], per_day(c))
         bl.pop("per_day", None)
+        rb = rating.block(s, user_id)
         return {"today": today.isoformat(),
+                "rating": rb, "mmr": rb["mmr"], "rank": rb["rank"], "games": rb["games"],
+                "next_rank_at": rb["next_rank_at"], "recent_deltas": rb["recent_deltas"],
+                "default_budget": {d: stp.split(stp.default_total(d, rb["rank"], False))
+                                   for d in "EMH"},
                 "plan": plan_dict(c.plan, today) if c.plan else None,
                 "ledger": ledger, "patterns": patterns, "recent_attempts": recent,
                 "backlog": bl, "streak": rules.streak(c.atts, today),
@@ -265,6 +272,7 @@ def find_problems(user_id, pattern=None, tier=None, untouched=None, difficulty=N
                          "last_attempt_day": last.isoformat() if last else None,
                          "clean_count": c.clean_by_problem.get(p.number, 0),
                          "in_retry": p.number in open_retry,
+                         "rating": rating.problem_rating(p), "rated": p.rating is not None,
                          "blocked": why is not None, "block_reason": why})
         rows.sort(key=lambda r: (r["blocked"], r["bank_order"] is None,
                                  r["bank_order"] if r["bank_order"] is not None else 0,
@@ -288,12 +296,20 @@ def _infer_slot(c, p):
     return "drill"
 
 
-def hand_out(user_id, number, target_min=None, mode="coached", why="", today=None):
+def hand_out(user_id, number, target_min=None, mode="coached", why="", today=None,
+             phase_budget=None, budget_reason=""):
     """The coach's pick. Validates the hard rules (PickRefused with the reason, nothing written),
     then writes the handout stamped now by the server clock, starts the clock, stores `why` as
     pick_reason (private until logged), emits `handout`. Returns the public Handoff (9 keys).
-    target_min None = the server default (80% of the first attempt's target if seen before,
-    else by difficulty)."""
+
+    Time budget (coach/steps.py): every coach handout has steps understand -> approach -> code.
+      phase_budget {understand, approach, code} minutes: target = their sum (target_min, if
+        also given, must equal it). Each step >= 1 min.
+      only target_min: split 15 / 30 / 55 %.
+      neither: the default, difficulty base (E10 / M15 / H35) x his rank factor (Bronze 1.3,
+        Silver 1.15, Gold 1.0, Platinum 0.85, Diamond 0.75), x 0.8 if he attempted it before.
+    The total must lie in E 5-20 / M 8-35 / H 15-60 min, else PickRefused. budget_reason is
+    private (shown on reveal)."""
     from .service import emit
     today = _today(today)
     if mode not in picker.MODES:
@@ -323,11 +339,64 @@ def hand_out(user_id, number, target_min=None, mode="coached", why="", today=Non
         why_not = refusal(c, p)
         if why_not:
             raise PickRefused(why_not)
+        budget = _budget(s, c, user_id, p, target_min, phase_budget)
         h = picker.create_handout(s, user_id, today, p, _infer_slot(c, p), p.pattern_slug,
-                                  target_min=target_min, mode=mode,
-                                  pick_reason=(why or "").strip())
+                                  target_min=sum(budget.values()), mode=mode,
+                                  pick_reason=(why or "").strip(), phase_budget=budget,
+                                  budget_reason=(budget_reason or "").strip() or None)
         emit(user_id, "handout", h.id, s)
         return picker.handoff_for(h, p)
+
+
+def _budget(s, c, user_id, p, target_min, phase_budget):
+    """The handout's {understand, approach, code} minutes, or PickRefused."""
+    d = p.difficulty or "M"
+    try:
+        if phase_budget is not None:
+            b = stp.parse_budget(phase_budget)
+            total = sum(b.values())
+            if target_min is not None and target_min != total:
+                raise stp.BudgetRefused(f"target_min {target_min} differs from the phase_budget "
+                                        f"sum {total}; leave target_min out")
+        elif target_min is not None:
+            total = target_min
+            b = stp.split(total)
+        else:
+            rk = rating.rank(rating.ensure(s, user_id).mmr)
+            total = stp.default_total(d, rk, p.number in c.attempts_by_problem)
+            lo, hi = stp.TOTAL_RANGE.get(d, stp.TOTAL_RANGE["M"])
+            total = min(hi, max(lo, total))
+            b = stp.split(total)
+        stp.check_total(d, sum(b.values()))
+    except stp.BudgetRefused as e:
+        raise PickRefused(str(e)) from None
+    return b
+
+
+def rate_problem(user_id, number, rating_value, why=""):
+    """The coach rates a problem's hardness ONCE (first hand-out): inside the band of its
+    level (E 800-1300, M 1200-1900, H 1700-2600), else PickRefused; a second rating is refused
+    (fixed once set, no crowd adjustment). Returns {number, rating, why}. Never tell him."""
+    try:
+        number = int(number)
+    except (TypeError, ValueError):
+        raise PickRefused(f"not a problem number: {number!r}") from None
+    why = (why or "").strip()
+    if not why:
+        raise PickRefused("why: one line on what makes it this hard")
+    from datetime import datetime
+    with session_scope() as s:
+        p = s.get(Problem, number)
+        if p is None:
+            raise PickRefused(f"{number} is not in the problem bank")
+        if p.rating is not None:
+            raise PickRefused(f"{number} is already rated {p.rating}; ratings are fixed once set")
+        try:
+            n = rating.check_band(p.difficulty, rating_value)
+        except rating.RatingRefused as e:
+            raise PickRefused(str(e)) from None
+        p.rating, p.rating_reason, p.rated_at = n, why[:300], datetime.now()
+        return {"number": p.number, "rating": n, "why": p.rating_reason}
 
 
 def skip_open(user_id):

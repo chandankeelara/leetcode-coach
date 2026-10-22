@@ -146,7 +146,9 @@ def test_hand_out_success_dto_clock_and_private_reason(world):
 def test_hand_out_default_target_and_retry_slot(world):
     log(world, num("heap"), TODAY - timedelta(days=10), bugs=2, target_min=15)
     h = service.hand_out(world, num("heap"), today=TODAY)
-    assert h.target_min == 12 and h.mode == "coached"           # 80% of the first target
+    # default budget: E base 10 x his rank factor (one bad game: Bronze 1.3) x 0.8 for a retry
+    assert service.get_rating(world)["rank"] == "Bronze"
+    assert h.target_min == round(10 * 1.3 * 0.8) == 10 and h.mode == "coached"
     with db.session_scope() as s:
         assert s.get(Handout, h.handout_id).slot == "retry"
 

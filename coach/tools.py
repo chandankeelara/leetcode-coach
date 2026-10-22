@@ -76,11 +76,31 @@ class Tool:
 
     async def call(self, ctx, args):
         """Run the tool. Sync tools run in a worker thread so a slow one (judge, run_tests)
-        never stalls the event loop that serves the website."""
-        if self.is_async:
-            return await self.fn(ctx, **args)
+        never stalls the event loop that serves the website. A result with `error`, or an
+        exception, is filed as friction for the dev team (feedback.record_friction)."""
         import anyio
-        return await anyio.to_thread.run_sync(lambda: self.fn(ctx, **args))
+        try:
+            if self.is_async:
+                out = await self.fn(ctx, **args)
+            else:
+                out = await anyio.to_thread.run_sync(lambda: self.fn(ctx, **args))
+        except Exception as e:
+            await anyio.to_thread.run_sync(lambda: friction(ctx, self.name, f"{type(e).__name__}: {e}"))
+            raise
+        if isinstance(out, dict) and out.get("error"):
+            await anyio.to_thread.run_sync(lambda: friction(ctx, self.name, out["error"]))
+        return out
+
+
+def friction(ctx, name, error):
+    """File a failed tool call as friction (never raises; a service without it is skipped)."""
+    f = getattr(ctx.svc, "record_friction", None)
+    if f is None:
+        return None
+    try:
+        return f(ctx.user_id, name, error)
+    except Exception:
+        return None
 
 
 TOOLS: dict[str, Tool] = {}
@@ -234,13 +254,54 @@ def find_problems(ctx, pattern: str | None = None, tier: int | None = None,
 
 @tool
 def hand_out(ctx, number: int, target_min: int | None = None, mode: str = "coached",
-             why: str = "") -> dict:
-    """Hand out the problem YOU chose. The server checks the hard rules and refuses with {error} (touched in the last 7 days, retired, not allowed yet by the plan, burned this session, another problem open). why: one plain line, kept private until he logs. mode: timed | coached. target_min default: the server's. Posts the handoff to the chat panel itself and returns its fields. Say nothing else alongside it."""
+             why: str = "", phase_budget: dict | None = None, budget_reason: str = "") -> dict:
+    """Hand out the problem YOU chose. The server checks the hard rules and refuses with {error} (touched in the last 7 days, retired, not allowed yet by the plan, burned this session, another problem open). why: one plain line, kept private until he logs. mode: timed | coached. phase_budget: {understand, approach, code} minutes, each >= 1; the target is their sum and must fit the server's range for the problem (refused otherwise). Left out: the server default for his rank (get_profile.default_budget). budget_reason: one private line, shown after he logs. Posts the handoff to the chat panel itself and returns its fields. Say nothing else alongside it."""
     try:
-        raw = ctx.svc.hand_out(ctx.user_id, number, target_min=target_min, mode=mode, why=why)
+        if phase_budget is None and not budget_reason:
+            raw = ctx.svc.hand_out(ctx.user_id, number, target_min=target_min, mode=mode,
+                                   why=why)
+        else:
+            raw = ctx.svc.hand_out(ctx.user_id, number, target_min=target_min, mode=mode,
+                                   why=why, phase_budget=phase_budget,
+                                   budget_reason=budget_reason)
     except ValueError as e:
         return {"error": str(e)}
     return _post_handoff(ctx, raw)
+
+
+@tool
+def rate_problem(ctx, number: int, rating: int, why: str) -> dict:
+    """Rate a problem's hardness ONCE, the first time you hand it out (before or right after hand_out). Bands by its level letter: E 800-1300, M 1200-1900, H 1700-2600; outside is refused, and a second rating is refused (fixed once set). why: one line. His rating moves against it. Never tell him the number before he logs."""
+    f = getattr(ctx.svc, "rate_problem", None)
+    if f is None:
+        return {"error": "not supported"}
+    try:
+        return _jsonable(f(ctx.user_id, number, rating, why))
+    except ValueError as e:
+        return {"error": str(e)}
+
+
+@tool
+def get_rating(ctx) -> dict:
+    """His rating: mmr, rank, games, next_rank_at, to_next, recent_deltas (last 10). For setting time budgets. Progress talk: never quote it while a problem is open; after reveal one line with the delta is fine."""
+    f = getattr(ctx.svc, "get_rating", None)
+    if f is None:
+        return {"error": "not supported"}
+    return _jsonable(f(ctx.user_id))
+
+
+@tool
+def request_feature(ctx, title: str, why: str, example: str = "", severity: str = "nice",
+                    tool: str | None = None) -> dict:
+    """Tell the dev team what you were missing. title: short. why: what it would let you do. example: the situation in words, at most 400 characters, NO code and no names. severity: blocked | workaround | nice. tool: the tool it is about, if any. Repeats of the same title are counted, not duplicated. Never mention it in his chat."""
+    f = getattr(ctx.svc, "request_feature", None)
+    if f is None:
+        return {"error": "not supported"}
+    try:
+        return _jsonable(f(ctx.user_id, title, why=why, example=example, severity=severity,
+                           tool=tool))
+    except ValueError as e:
+        return {"error": str(e)}
 
 
 @tool
@@ -311,22 +372,23 @@ def reset_timer(ctx) -> dict:
         return {"error": str(e)}
 
 
-def _clock(ctx, action, reason="", target_min=None, label=None):
+def _clock(ctx, action, reason="", target_min=None, label=None, force=False):
     hid = _open_handout(ctx)
     if hid is None:
         return {"error": "no open problem"}
+    kw = {"force": True} if force else {}
     try:
         return _jsonable(ctx.svc.clock(ctx.user_id, hid, action, reason=reason,
-                                       target_min=target_min, label=label))
+                                       target_min=target_min, label=label, **kw))
     except ValueError as e:
         return {"error": str(e)}
 
 
 @tool
 def clock(ctx, action: str, reason: str = "", target_min: int | None = None,
-          label: str | None = None) -> dict:
-    """Control his clock: start | pause | resume | reset | target | phase. Say why in chat when you pause or reset."""
-    return _clock(ctx, action, reason, target_min, label)
+          label: str | None = None, force: bool = False) -> dict:
+    """Control his clock: start | pause | resume | reset | target | phase. Say why in chat when you pause or reset. phase label on a problem with steps: understand | approach | code. He ends the understand step himself (his button); force=true only if he said in chat he understood and the button failed. unlock_editor moves approach -> code."""
+    return _clock(ctx, action, reason, target_min, label, force)
 
 
 @tool
@@ -370,7 +432,7 @@ async def wait(ctx, timeout_s):
 async def wait_for_event(ctx, timeout_s: int = 1500) -> dict:
     """Block until the learner does something on the website, then return {kind, payload};
     {kind: "timeout"} if nothing came. kind: approach | submission | stuck | skip | chat |
-    timer_over | clock_checkpoint | annotation_reply. Call it at the END of every turn while he is working. Claude Code may move it
+    timer_over | clock_checkpoint | annotation_reply | understood | idle. Call it at the END of every turn while he is working. Claude Code may move it
     to the background after ~2 min; that is fine, the result still arrives."""
     return _jsonable(await wait(ctx, timeout_s))
 
