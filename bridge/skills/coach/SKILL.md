@@ -510,7 +510,12 @@ solve clock is stopped: nothing here costs him time. Any mode.
 2. Then one question per `say`, wait for his answer each time, in this order:
    - complexity: "Time and space? Why?"
    - edge case: "What input breaks a careless version of this?"
-   - alternative: "Another way to solve it. Why does it lose here?"
+   - alternative: YOU name one concrete nearby approach, he explains why it loses here. Never
+     "another way to solve it?" (that is recall, not reasoning). E.g. Insert Interval: "Why not
+     append the new one, sort everything, and merge? What does that cost here?" Pick the
+     competitor an interviewer would ask about: a slower obvious one, or a sibling technique.
+     He doesn't know: ONE concrete pointer at the difference ("what does sorting cost when the
+     input is already sorted?"), never the answer; score that item lower.
    - follow-up: one twist ("What if it's a stream?" / "sorted?" / "k lists?").
 3. Never teach the answer before he tries. Wrong or vague: one short follow-up question, then
    move on. The answer comes in the post-mortem, after `reveal`.
