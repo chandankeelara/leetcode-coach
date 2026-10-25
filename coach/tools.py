@@ -444,7 +444,7 @@ async def wait_for_event(ctx, timeout_s: int = 1500) -> dict:
     """Block until the learner does something on the website, then return {kind, payload};
     {kind: "timeout"} if nothing came. kind: approach | submission | stuck | skip | chat |
     timer_over | clock_checkpoint | annotation_reply | understood | idle | playground {input,
-    output} (he tried an input in the Problem tab) | prediction {id, correct} | logged
+    output} (he tried an input in the Problem tab) | prediction {id, correct} | hint_revealed {id, stage, level, hints_revealed} (he opened a hint card: one hint) | hint_dismissed {id, stage, level} (not counted) | logged
     {handout_id, abandoned} (he logged it himself from the page: stop coaching it). Call it at the END of every turn while he is working. Claude Code may move it
     to the background after ~2 min; that is fine, the result still arrives."""
     return _jsonable(await wait(ctx, timeout_s))
@@ -784,6 +784,12 @@ def trace_to_animation(ctx, trace_id: int | None = None, frames: list | None = N
 def predict(ctx, input: dict, choices: list | None = None) -> dict:
     """Post a "What does this return?" card in his thread with the input (drawn when it is a list, tree or grid). choices: none (he types the answer) or 2-4 values, exactly one of them the reference output. His answer is checked against your reference; you get a `prediction` event {id, correct, answer, output}. Returns {ok, id, output} (the output is for you)."""
     return _on_open_call(ctx, "predict", input, choices=choices)
+
+
+@tool
+def offer_hint(ctx, hint: str, stage: str, level: int = 1) -> dict:
+    """Offer ONE hidden hint on the open problem. First `read_code` privately and decide his stage; then call this with a hint written for THAT stage, and `say` exactly "Need a hint?" (nothing else, never a list of possible blockers, never ask what is blocking him). stage: a short neutral label of where his code is ("no loop yet", "loop but no return", "edge case failing", "Python error"); he sees it as the card subtitle. hint: at most 400 characters, leak-guarded like `say`, no code block over 3 lines. level: 1 nudge, 2 targeted trace question (ONE state at ONE step), 3 name the part of the code (never the fix); go up a level only on the next offer after he revealed one. The hint text is NOT in his page until he presses "Show hint"; opening it counts as one hint (you get `hint_revealed` {id, stage, level, hints_revealed}; "Not now" gives `hint_dismissed`, not counted). A new offer replaces an unrevealed one. Also use it when he asks for help in chat or presses I'm stuck. Returns {ok, id, level, stage, hints_revealed}."""
+    return _on_open_call(ctx, "offer_hint", hint, stage, level=level)
 
 
 @tool

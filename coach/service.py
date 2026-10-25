@@ -16,6 +16,7 @@ from sqlalchemy import delete, select
 
 from . import clock as clk
 from . import picker, plans, rating, rules, state
+from . import hints as _hints
 from . import steps as stp
 from .catalog import default_target, pattern_name, pattern_tier
 from .db import session_scope
@@ -1048,6 +1049,7 @@ def reveal(handout_id):
             nxt = rating.next_rank_at(ev.after)
             out["rating"]["next_rank_at"] = nxt
         # coach scoring (coach/scoring.py): pending until the coach calls score_attempt
+        out["hints_revealed"] = _hints.hints_revealed(s, h.id)
         out["score_pending"] = a is not None and ev is None
         out["code_reason"] = h.code_reason
         return out
@@ -1443,6 +1445,7 @@ def session_summary(user_id, today=None):
                                                     and x.verdict != "Accepted"),
                                 "verdicts": [x.verdict for x in subs]},
                 "handout_id": h.id, "number": p.number, "title": p.title,
+                "hints_revealed": _hints.hints_revealed(s, h.id),
                 "handed_at": h.handed_at.isoformat(), "target_min": h.target_min,
                 "status": h.status, "mode": picker.handout_mode(h),
                 "attempt": _attempt_row(a) if a else None, "reveal": rv,
@@ -1511,6 +1514,7 @@ from .scoring import ScoreRefused, score_attempt, unlock_with_budget  # noqa: E4
 from .reference import (RateLimited, answer_predict, gallery, get_trace,  # noqa: E402
                         playground_run, playground_state, predict, reference_of, set_reference,
                         trace, trace_to_animation)
+from .hints import dismiss_hint, offer_hint, reveal_hint  # noqa: E402
 from .notes import add_note, list_notes, retire_note  # noqa: E402
 
 # ---- live rating on the reveal page (signup branch) ------------------------------------------

@@ -878,6 +878,9 @@ def _drawing(html):
 
 def card_html(c):
     d = c.data or {}
+    if c.kind == "hint":
+        from . import hints
+        return hints.card_html(c)
     if c.kind == "gallery":
         trs = []
         for r in d.get("rows") or []:

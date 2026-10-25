@@ -475,6 +475,12 @@
     nodes.forEach(function (n) {
       var id = parseInt(n.dataset.id, 10);
       if (log.querySelector('.msg[data-id="' + id + '"]')) return;
+      if (n.querySelector('.hint-card[data-state="open"]')) {
+        log.querySelectorAll('.msg .hint-card[data-state="open"]').forEach(function (old) {
+          var om = old.closest(".msg");
+          if (om) om.remove();
+        });
+      }
       n.classList.toggle("cont", n.dataset.role === prevRole);
       n.classList.add("new");
       prevRole = n.dataset.role;

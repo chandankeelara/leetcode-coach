@@ -6,6 +6,8 @@ POST needs the CSRF header (window.coach.post sends it). The REFERENCE runs here
                                 -> {output, output_text, error, input_html, output_html}
                                    429 {error} more than one run a second, 400 {error} bad input
     POST /predict/{card_id}     answer=<text> or choice=<index> -> {ok, correct, html}
+    POST /hint/{card_id}/reveal  -> {ok, html, hint, stage, level, hints_revealed}
+    POST /hint/{card_id}/dismiss -> {ok, html}
 """
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
@@ -72,6 +74,26 @@ async def predict_post(request: Request, card_id: int):
     try:
         out = await run_in_threadpool(_f("answer_predict"), sess["uid"], card_id,
                                       form.get("answer"), form.get("choice"))
+    except ValueError as e:
+        return _no_store({"error": str(e)}, 400)
+    return _no_store(out)
+
+
+@router.post("/hint/{card_id}/reveal")
+async def hint_reveal(request: Request, card_id: int):
+    sess, _ = await _app.authed_form(request)
+    try:
+        out = await run_in_threadpool(_f("reveal_hint"), sess["uid"], card_id)
+    except ValueError as e:
+        return _no_store({"error": str(e)}, 400)
+    return _no_store(out)
+
+
+@router.post("/hint/{card_id}/dismiss")
+async def hint_dismiss(request: Request, card_id: int):
+    sess, _ = await _app.authed_form(request)
+    try:
+        out = await run_in_threadpool(_f("dismiss_hint"), sess["uid"], card_id)
     except ValueError as e:
         return _no_store({"error": str(e)}, 400)
     return _no_store(out)

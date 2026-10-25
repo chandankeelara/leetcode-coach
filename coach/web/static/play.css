@@ -80,6 +80,17 @@
 .rq-table .rq-arrow { color: var(--text-3); width: 1.5em; padding-top: 10px; }
 .rq-label { display: block; font-size: var(--t-xs); color: var(--text-2); margin-bottom: 4px; }
 .rq-err { color: var(--text-3); font-style: italic; }
+.hint-card { gap: var(--s2); }
+.hint-stage { margin: 0; font-size: var(--t-sm); color: var(--text-2); }
+.hint-actions { display: flex; align-items: center; gap: var(--s3); }
+.hint-no {
+  background: none; border: 0; padding: 4px 2px; cursor: pointer; font: inherit;
+  font-size: var(--t-sm); color: var(--text-3); text-decoration: underline;
+}
+.hint-no:hover { color: var(--text-2); }
+.hint-no:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.hint-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.rq-hint[data-state="revealed"] .rq-q .hint-stage { font-weight: 400; margin-left: var(--s2); }
 @media (max-width: 560px) {
   .rq-table thead { display: none; }
   .rq-table, .rq-table tbody { display: block; }

@@ -116,6 +116,29 @@
     });
   });
 
+  /* hint cards: "Show hint" fetches the text only now; "Not now" dismisses (not counted) */
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest ? e.target.closest(".hint-show, .hint-no") : null;
+    if (!b) return;
+    var card = b.closest(".hint-card"), id = b.dataset.card;
+    var show = b.classList.contains("hint-show");
+    card.querySelectorAll("button").forEach(function (x) { x.disabled = true; });
+    post("/hint/" + id + (show ? "/reveal" : "/dismiss"), {}).then(function (r) {
+      return r.json().then(function (d) { return { ok: r.ok, d: d }; });
+    }).then(function (res) {
+      if (res.ok && res.d.html) { card.outerHTML = res.d.html; return; }
+      if (!res.ok && card.isConnected) {
+        var m = card.querySelector(".rq-msg");
+        if (m) m.textContent = (res.d && res.d.error) || "Could not open that.";
+        card.querySelectorAll("button").forEach(function (x) { x.disabled = false; });
+      }
+    }).catch(function () {
+      var m = card.querySelector(".rq-msg");
+      if (m) m.textContent = "Could not reach the server.";
+      card.querySelectorAll("button").forEach(function (x) { x.disabled = false; });
+    });
+  });
+
   load();
   if (window.coachLive) {
     window.coachLive.on("statement", load);
