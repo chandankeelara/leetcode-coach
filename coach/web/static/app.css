@@ -671,6 +671,8 @@ body.app-solve .toasts { right: auto; left: var(--s4); bottom: var(--s4); }
 .solve[data-stage="code"] .ed-lock { display: none; }
 
 .CodeMirror { height: 100%; background: transparent; color: var(--text); font: 400 14px/1.65 var(--f-code); }
+/* Room under the last line so the cursor line can sit mid-editor (typewriter scrolling, solve.js). */
+#ed .CodeMirror-lines { padding-bottom: 45vh; }
 .CodeMirror-gutters { background: var(--sunk); border-right: 1px solid var(--line); }
 .CodeMirror-linenumber { color: var(--text-3); padding: 0 12px 0 10px; font-size: 12.5px; }
 .CodeMirror-cursor { border-left: 2px solid var(--hl-ink); }

@@ -227,10 +227,21 @@
       readOnly: "nocursor",
       extraKeys: {
         Tab: function (c) {
-          if (c.somethingSelected()) c.indentSelection("add");
-          else c.replaceSelection("    ", "end");
+          if (c.somethingSelected()) { c.indentSelection("add"); return; }
+          /* to the next multiple of 4, like a tab stop */
+          var ch = c.getCursor().ch;
+          c.replaceSelection(" ".repeat(4 - (ch % 4)), "end");
         },
         "Shift-Tab": function (c) { c.indentSelection("subtract"); },
+        /* Spaces behave like tabs: in leading indentation, Backspace removes one level (back to
+           the previous multiple of 4), not one space. Anywhere else it is a normal Backspace. */
+        Backspace: function (c) {
+          if (c.somethingSelected()) return CodeMirror.Pass;
+          var cur = c.getCursor(), before = c.getLine(cur.line).slice(0, cur.ch);
+          if (!cur.ch || /[^ ]/.test(before)) return CodeMirror.Pass;
+          var back = (cur.ch % 4) || 4;
+          c.replaceRange("", { line: cur.line, ch: cur.ch - back }, cur, "+delete");
+        },
         "Ctrl-Enter": function () { submit(); },
         "Cmd-Enter": function () { submit(); },
         "Ctrl-/": "toggleComment",
@@ -265,6 +276,23 @@
     }, 450);
   }
   if (cm) cm.on("change", onCodeChange);
+  /* Typewriter scrolling: keep the cursor's line in the middle of the editor. The space under
+     the last line (CSS padding on .CodeMirror-lines, 50% of the editor) lets even the last line
+     sit in the middle instead of at the bottom edge. */
+  if (cm) {
+    var centring = false;
+    cm.on("cursorActivity", function (c) {
+      if (centring || c.somethingSelected()) return;
+      centring = true;
+      /* after CodeMirror's own scroll-into-view; a timer, not rAF, so it also runs when the
+         tab is in the background */
+      setTimeout(function () {
+        var y = c.cursorCoords(null, "local").top, half = c.getScrollInfo().clientHeight / 2;
+        c.scrollTo(null, Math.max(0, y - half + c.defaultTextHeight()));
+        centring = false;
+      }, 0);
+    });
+  }
   if (saved) savedEl.textContent = "draft restored";
 
   function openEditor(first) {
