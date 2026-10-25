@@ -509,3 +509,19 @@ def test_input_structure_words_are_not_leaks():
         text = "the heads of two sorted linked lists"
         assert not any(r.search(text) for r in rx)
         assert any(r.search("start from a dummy head") for r in rx)
+
+
+def test_thread_is_only_this_problem_whatever_the_history(world):
+    """2026-10-25: with >200 old messages the solve chat showed the oldest ones (Flood Fill)."""
+    old = _handout_for(world, 8)
+    for i in range(250):
+        service.post_message(world, "coach", f"old {i}", handout_id=old)
+    with db.session_scope() as s:
+        s.get(Handout, old).status = "logged"
+    new = _handout_for(world, 206)
+    a = service.post_message(world, "coach", "about the new one")          # untied -> tied to open
+    b = service.post_message(world, "user", "my approach")
+    msgs = service.thread_messages(world, new, 0)
+    assert [m["id"] for m in msgs] == [a, b]
+    assert all(m["handout_id"] == new for m in msgs)
+    assert service.thread_messages(world, new, a) == msgs[1:]

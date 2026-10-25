@@ -228,6 +228,15 @@ def frag(text, ok=True):
     return HTMLResponse(f'<span class="{"ok" if ok else "err"}">{text}</span>')
 
 
+def _thread(uid, h, since):
+    """The open problem's chat. Uses service.thread_messages when the service has it (the
+    real one does); otherwise filters the full list with this_handout (test fakes)."""
+    f = getattr(service(), "thread_messages", None)
+    if f:
+        return f(uid, h.handout_id, since)
+    return [m for m in service().messages(uid, since) if this_handout(m, h)]
+
+
 def this_handout(m, h):
     """RULE ZERO: the solve page chat starts at this handout, so talk about the previous
     problem (its pattern, its reveal) never shows next to a new one."""
@@ -325,9 +334,8 @@ async def solve(request: Request):
     h = service().current_handout(sess["uid"])
     if not h:
         return go("/")
-    msgs = service().messages(sess["uid"], 0)
-    last = msgs[-1]["id"] if msgs else 0
-    msgs = [m for m in msgs if this_handout(m, h)]
+    msgs = _thread(sess["uid"], h, 0)
+    last = max([m["id"] for m in msgs] + [_last_message_id(sess["uid"])])
     c = clock_of(sess["uid"], h)
     return render(request, "solve.html", sess, h=h, elapsed=c["elapsed_s"], clock=c,
                   started=h.started_at.strftime("%H:%M"), msgs=msgs,
@@ -480,9 +488,11 @@ async def visuals(request: Request, since: int = 0):
 @app.get("/messages", response_class=HTMLResponse)
 async def messages(request: Request, since: int = 0):
     sess = require(request)
-    msgs = service().messages(sess["uid"], since)
-    last = msgs[-1]["id"] if msgs else since
     h = service().current_handout(sess["uid"])
+    # Only the open problem's chat, whatever `since` the page sends (a page that asked from 0
+    # used to get the oldest 200 messages of all time).
+    msgs = _thread(sess["uid"], h, since) if h else []
+    last = msgs[-1]["id"] if msgs else max(since, _last_message_id(sess["uid"]) if h else since)
     resp = templates.TemplateResponse(request, "_messages.html", {"msgs": msgs, "last": last})
     resp.headers["X-Last-Id"] = str(last)
     resp.headers["X-Open-Handout"] = str(h.handout_id) if h else ""

@@ -1208,6 +1208,12 @@ def post_message(user_id, role, content, handout_id=None):
     role coach: RULE ZERO guard (rule_zero_check) on the open problem: ValueError(
     "leak: names the open problem's pattern") and nothing stored."""
     with session_scope() as s:
+        if handout_id is None:
+            # Tie every message to the problem it was said during, so the chat of a problem is
+            # exactly its messages (2026-10-25: untied messages made old chats reappear).
+            handout_id = s.scalars(select(Handout.id).where(
+                Handout.user_id == user_id, Handout.status == "open",
+                Handout.slot != "imported").order_by(Handout.id.desc())).first()
         if role == "coach":
             hh = s.get(Handout, handout_id) if handout_id is not None else None
             rule_zero_check(s, user_id, content,
@@ -1263,6 +1269,27 @@ def editor_open(user_id, handout_id):
     with session_scope() as s:
         h = s.get(Handout, handout_id)
         return bool(h is not None and h.user_id == user_id and h.editor_open)
+
+
+def thread_messages(user_id, handout_id, since_id=0):
+    """The chat of ONE problem: its messages after since_id, oldest first, no limit. Untied
+    messages (from before every message carried its handout) count when said after the
+    problem first started. Never another problem's talk: RULE ZERO."""
+    with session_scope() as s:
+        h = s.get(Handout, handout_id)
+        if h is None or h.user_id != user_id:
+            return []
+        start = min(x for x in (h.first_started_at, h.handed_at) if x is not None) \
+            - timedelta(seconds=2)
+        ids = list(s.scalars(select(CoachMessage.id).where(
+            CoachMessage.user_id == user_id, CoachMessage.id > since_id,
+            (CoachMessage.handout_id == handout_id)
+            | ((CoachMessage.handout_id.is_(None)) & (CoachMessage.created_at >= start)))
+            .order_by(CoachMessage.id)))
+    if not ids:
+        return []
+    return [m for m in list_messages(user_id, ids[0] - 1, limit=len(ids) + 50)
+            if m["id"] in set(ids)]
 
 
 def list_messages(user_id, since_id=0, limit=200):

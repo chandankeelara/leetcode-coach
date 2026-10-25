@@ -158,6 +158,9 @@ class Svc:
         f = getattr(_s, "messages", None) or _s.list_messages
         return f(user_id, since_id)
 
+    def thread_messages(self, user_id, handout_id, since_id=0):
+        return _s.thread_messages(user_id, handout_id, since_id)
+
     def ui_events_since(self, user_id, since_id=0):
         return _s.ui_events_since(user_id, since_id)
 
