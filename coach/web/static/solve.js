@@ -31,7 +31,8 @@
      freezes. /handout/state is refetched on every `clock` event. */
   var elapsed0 = parseInt(root.dataset.elapsed, 10) || 0;
   var target = (parseInt(root.dataset.target, 10) || 1) * 60;
-  var run = root.dataset.run !== "paused";
+  /* running | paused | stopped (Accepted: the review step, the solve clock is frozen) */
+  var run = (root.dataset.run || "running") === "running";
   var resets = parseInt(root.dataset.resets, 10) || 0;
   var t0 = performance.now();
   var tNow = $("t-now"), tFill = $("t-fill"), timer = $("timer"), tState = $("t-state");
@@ -47,9 +48,9 @@
     if (!c) return;
     elapsed0 = Math.max(0, c.elapsed_s | 0);
     t0 = performance.now();
-    run = c.state !== "paused";
-    timer.dataset.run = run ? "running" : "paused";
-    tPaused.hidden = run;
+    run = c.state === "running";
+    timer.dataset.run = c.state === "stopped" ? "stopped" : (run ? "running" : "paused");
+    tPaused.hidden = c.state !== "paused";
     tPaused.title = run ? "" : (c.pause_reason || "");
     tPhase.textContent = c.phase || "";
     if (c.target_min) {

@@ -413,6 +413,24 @@ async def understood(request: Request):
     return JSONResponse(r)
 
 
+@app.post("/solve/review/skip")
+async def review_skip(request: Request):
+    """Step 4 Review is optional (coach/steps.py): "Skip review" ends it, no penalty, and tells
+    the coach (`review_skipped` event)."""
+    sess, _ = await authed_form(request)
+    h = service().current_handout(sess["uid"])
+    f = getattr(service(), "skip_review", None)
+    if not h or f is None:
+        return JSONResponse({"ok": False, "error": "No open problem."}, status_code=400)
+    try:
+        r = await run_in_threadpool(f, sess["uid"], h.handout_id)
+    except ValueError as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+    r = dict(r)
+    r["clock"] = clock_of(sess["uid"], h)
+    return JSONResponse(r)
+
+
 @app.post("/solve/submit", response_class=HTMLResponse)
 async def submit(request: Request):
     sess, form = await authed_form(request)

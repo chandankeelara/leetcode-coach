@@ -89,6 +89,8 @@
           </li>
           {% endfor %}
         </ol>
+        {% if r.review and r.review.state == "done" %}<p class="rv-review-time" id="rv-review-time"><span class="eyebrow">Review</span> {{ "%d:%02d"|format(r.review.seconds // 60, r.review.seconds % 60) }}, not part of the solve time</p>
+        {% elif r.review and r.review.state == "skipped" %}<p class="rv-review-time" id="rv-review-time"><span class="eyebrow">Review</span> skipped</p>{% endif %}
         {% if r.budget_reason %}<p class="rv-budget-why"><span class="eyebrow">Why this budget</span> {{ r.budget_reason }}</p>{% endif %}
         {% if r.code_reason %}<p class="rv-budget-why" id="rv-code-why"><span class="eyebrow">Why this code time</span> {{ r.code_reason }}</p>{% endif %}
       </div>

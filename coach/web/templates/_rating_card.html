@@ -45,9 +45,23 @@
             {% set hp = bd.hints or {} %}
             <tr class="{{ 'none' if hp.deduction else 'full' }}"><td>Hints<span class="part-why">{{ hp.why }}</span></td><td class="num"></td><td class="num"></td><td class="num">{{ "-%.2f"|format(hp.deduction) if hp.deduction else "0" }}</td></tr>
             {% if bd.abandoned %}<tr class="none"><td>Abandoned</td><td class="num"></td><td class="num"></td><td class="num">0</td></tr>{% endif %}
+            {% if bd.review %}<tr class="full rv-bonus-row"><td>Review bonus</td><td class="num"></td><td class="num"></td><td class="num">+{{ "%g"|format(bd.review.bonus) }}</td></tr>{% endif %}
           </tbody>
-          <tfoot><tr><td>Actual</td><td></td><td></td><td class="num">{{ "%.2f"|format(rt.actual) }}</td></tr></tfoot>
+          <tfoot><tr><td>Actual</td><td></td><td></td><td class="num">{{ ("%.3f" if bd.review else "%.2f")|format(rt.actual) }}</td></tr></tfoot>
         </table>
+        {% set review_names = {"complexity": "Complexity and why", "edge_case": "An input that breaks it", "alternative": "A nearby approach", "follow_up": "Follow-up twist"} %}
+        {% if bd.review %}
+        <div class="rv-review" id="rv-review">
+          <h3 class="eyebrow sub-h">Review bonus <span class="rv-review-total">+{{ "%g"|format(bd.review.bonus) }}</span></h3>
+          <ul class="rv-review-list">
+            {% for k in ["complexity", "edge_case", "alternative", "follow_up"] %}{% set p = bd.review["items"].get(k) %}{% if p %}
+            <li class="{{ 'full' if p.score >= 1 else ('none' if p.score <= 0 else 'part') }}"><span class="rv-review-name">{{ review_names[k] }}</span><span class="rv-review-score">{{ (p.score * 100)|round|int }}% of {{ "%.2f"|format(p.weight) }}</span><span class="part-why">{{ p.why }}</span></li>
+            {% endif %}{% endfor %}
+          </ul>
+        </div>
+        {% elif r.review and r.review.state == "skipped" %}
+        <p class="rv-review-skipped" id="rv-review">Review skipped.</p>
+        {% endif %}
         {% else %}
         <p class="rv-scored-by"><span class="badge plain">scored by formula</span></p>
         <table class="parts">

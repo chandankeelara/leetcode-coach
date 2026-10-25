@@ -199,6 +199,9 @@ class Svc:
     def understood(self, user_id, handout_id):
         return _s.understood(user_id, handout_id)
 
+    def skip_review(self, user_id, handout_id):
+        return _s.skip_review(user_id, handout_id)
+
     def rating_history(self, user_id, n=20):
         return _s.rating_history(user_id, n)
 

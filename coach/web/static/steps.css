@@ -52,8 +52,16 @@
 .solve[data-step="understand"] .chat-log { display: flex; }
 .solve[data-step="understand"] #appr-again { display: none; }
 
+/* step 4: review after Accepted. Own clock, no budget, so no over state; Skip beside it */
+.step-cur.step-review { background: var(--ok-wash); border-color: color-mix(in srgb, var(--ok) 35%, transparent); }
+.step-cur.step-review .step-time { color: var(--text-2); }
+.step-skip { white-space: nowrap; }
+.step-chip-review.skipped { color: var(--text-2); background: var(--line-2); }
+.clock[data-run="stopped"] .clock-now { color: var(--text-3); }
+
 @media (max-width: 900px) {
   .step-chip { display: none; }
+  .step-chip-review { display: inline-flex; }
 }
 @media (max-width: 640px) {
   .step-n, .step-sep { display: none; }

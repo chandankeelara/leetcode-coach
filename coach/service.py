@@ -262,6 +262,9 @@ def clock(user_id, handout_id, action, reason="", target_min=None, label=None, n
         h = s.get(Handout, handout_id)
         if h is None or h.user_id != user_id or h.status != "open":
             raise ValueError(f"no open handout {handout_id}")
+        if clk.stopped(h):
+            raise ValueError("the solve clock stopped at Accepted (review step); review time "
+                             "never counts. Log the attempt when the review is over")
         _materialize_clock(h)
         value, warning = {}, None
         if action in ("start", "resume"):
@@ -378,6 +381,51 @@ def understood(user_id, handout_id, now=None):
         emit(user_id, "clock", h.id, s)
         return {"ok": True, "phase": "approach", "already": False,
                 "understand_s": secs["understand"]}
+
+
+def start_review(user_id, handout_id, now=None):
+    """`judge` returned Accepted: on his open handout WITH steps, step 4 Review starts
+    (coach/steps.py): the code step and the solve clock stop, the review clock starts, a
+    `review_started {handout_id, solve_s, code_s}` event goes to the coach and `clock` is
+    emitted. Once per handout; True when it started now."""
+    now = now or datetime.now()
+    with session_scope() as s:
+        h = s.get(Handout, handout_id)
+        if h is None or h.user_id != user_id or h.status != "open" or not stp.has_steps(h):
+            return False
+        _materialize_clock(h)
+        secs = stp.start_review(h, now)
+        if secs is None:
+            return False
+        s.add(ClockEvent(user_id=user_id, handout_id=h.id, action="phase", at=now,
+                         reason="accepted: review step",
+                         value={"label": stp.REVIEW, "by": "judge", "seconds": secs}))
+        s.add(Event(user_id=user_id, kind="review_started", payload={
+            "handout_id": h.id, "solve_s": h.clock_accum_s, "code_s": secs.get("code", 0)}))
+        s.flush()
+        emit(user_id, "clock", h.id, s)
+        return True
+
+
+def skip_review(user_id, handout_id, now=None):
+    """He pressed "Skip review": the review step ends (no penalty), `review_skipped
+    {handout_id, review_s}` goes to the coach, `clock` is emitted. Idempotent once skipped.
+    ValueError unless his, open and in an open review. Returns {ok, already, review_s}."""
+    now = now or datetime.now()
+    with session_scope() as s:
+        h = s.get(Handout, handout_id)
+        if h is None or h.user_id != user_id or h.status != "open":
+            raise ValueError(f"no open handout {handout_id}")
+        if h.review_state == "skipped":
+            return {"ok": True, "already": True, "review_s": int(h.review_s or 0)}
+        if not stp.review_open(h):
+            raise ValueError("no review step open")
+        stp.end_review(h, "skipped", now)
+        s.add(Event(user_id=user_id, kind="review_skipped", payload={
+            "handout_id": h.id, "review_s": h.review_s}))
+        s.flush()
+        emit(user_id, "clock", h.id, s)
+        return {"ok": True, "already": False, "review_s": h.review_s}
 
 
 def clock_record(s, h, end=None):
@@ -870,6 +918,7 @@ def _log_attempt(user_id, handout_id=None, number=None, actual_min=None, bugs=0,
                 _materialize_clock(h)
                 h.phase_elapsed = stp.seconds(h, now)        # freeze the step times
                 h.phase_start_s = clk.elapsed_s(h, now)
+                stp.end_review(h, "done", now)               # the review clock stops too
             if actual_min is None:
                 actual_min = max(1, round(clk.elapsed_s(h, now) / 60))
         if actual_min is None:
@@ -1035,6 +1084,7 @@ def reveal(handout_id):
             out["trap_quiz"] = trap_quiz(h.user_id, slug, s)
         out["clock"] = clock_record(s, h)
         out["steps"] = _steps_record(h)
+        out["review"] = stp.review_block(h)        # None = never offered; done | skipped
         out["budget_reason"] = h.budget_reason
         out["problem_rating"] = {"rating": rating.problem_rating(p),
                                  "rated": p.rating is not None, "why": p.rating_reason}

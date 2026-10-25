@@ -444,7 +444,7 @@ async def wait_for_event(ctx, timeout_s: int = 1500) -> dict:
     """Block until the learner does something on the website, then return {kind, payload};
     {kind: "timeout"} if nothing came. kind: approach | submission | stuck | skip | chat |
     timer_over | clock_checkpoint | annotation_reply | understood | idle | playground {input,
-    output} (he tried an input in the Problem tab) | prediction {id, correct} | hint_revealed {id, stage, level, hints_revealed} (he opened a hint card: one hint) | hint_dismissed {id, stage, level} (not counted) | logged
+    output} (he tried an input in the Problem tab) | prediction {id, correct} | hint_revealed {id, stage, level, hints_revealed} (he opened a hint card: one hint) | hint_dismissed {id, stage, level} (not counted) | review_started {handout_id, solve_s, code_s} (judge said Accepted: step 4 Review is open) | review_skipped {handout_id, review_s} (he pressed Skip review: log it, no review part) | logged
     {handout_id, abandoned} (he logged it himself from the page: stop coaching it). Call it at the END of every turn while he is working. Claude Code may move it
     to the background after ~2 min; that is fine, the result still arrives."""
     return _jsonable(await wait(ctx, timeout_s))
@@ -510,7 +510,7 @@ def log_attempt(ctx, handout_id: int, bugs: int, hints: int, optimal: bool, deri
 
 @tool
 def score_attempt(ctx, handout_id: int, parts: dict, summary: str = "") -> dict:
-    """Score his solve, ONCE, after log_attempt (and reveal). parts: {understand, approach, first_submit, quality, time: {score 0-1, why}, hints: {deduction 0-0.3, why}}. Weights 0.10 / 0.25 / 0.30 / 0.15 / 0.20; actual = weighted sum - hints deduction, floor 0. Abandoned attempts are already scored 0 by the server at log time: score_attempt on one only attaches your reasons and summary (the 0 and the MMR do not change). Each why: one plain line, at most 200 characters, no code, no names; shown on his reveal page. summary: one line. The server rates it against the problem (expected, K) and moves his MMR. A second call is refused. Returns actual, expected, delta, before, after, rank, rank_up."""
+    """Score his solve, ONCE, after log_attempt (and reveal). parts: {understand, approach, first_submit, quality, time: {score 0-1, why}, hints: {deduction 0-0.3, why}, review?: {complexity?, edge_case?, alternative?, follow_up?: {score 0-1, why}}}. Weights 0.10 / 0.25 / 0.30 / 0.15 / 0.20; actual = weighted sum - hints deduction, floor 0. review (optional, only after Accepted, refused if he skipped it): only the items you asked (unasked = absent, never 0); bonus = 0.03 complexity + 0.03 edge_case + 0.02 alternative + 0.02 follow_up, each x score, cap 0.10, added on top (actual up to 1.10). Abandoned attempts are already scored 0 by the server at log time: score_attempt on one only attaches your reasons and summary (the 0 and the MMR do not change). Each why: one plain line, at most 200 characters, no code, no names; shown on his reveal page. summary: one line. The server rates it against the problem (expected, K) and moves his MMR. A second call is refused. Returns actual, expected, delta, before, after, rank, rank_up."""
     f = getattr(ctx.svc, "score_attempt", None)
     if f is None:
         return {"error": "not supported"}
@@ -720,7 +720,7 @@ def run_tests(ctx, cases: list | None = None) -> dict:
 
 @tool
 def judge(ctx, extra_cases: list | None = None) -> dict:
-    """Grade his latest SUBMISSION the way LeetCode would. Runs the submitted code on the panel's cases plus `extra_cases` (yours, hidden: same format as set_tests cases, with `expected`; he never sees them). Case values may use {"$repeat": [value, n]} and {"$range": [a, b]} so a near-max case is a few characters. Returns {verdict: "Accepted"|"Wrong Answer"|"Time Limit Exceeded"|"Runtime Error", first_failure: {input, got, expected, error, size, hidden} | null, passed, total, slowest_ms}. A timeout (3 s for the whole run) is Time Limit Exceeded. The verdict is stored: every non-Accepted one counts as a bug."""
+    """Grade his latest SUBMISSION the way LeetCode would. Runs the submitted code on the panel's cases plus `extra_cases` (yours, hidden: same format as set_tests cases, with `expected`; he never sees them). Case values may use {"$repeat": [value, n]} and {"$range": [a, b]} so a near-max case is a few characters. Returns {verdict: "Accepted"|"Wrong Answer"|"Time Limit Exceeded"|"Runtime Error", first_failure: {input, got, expected, error, size, hidden} | null, passed, total, slowest_ms}. A timeout (3 s for the whole run) is Time Limit Exceeded. The verdict is stored: every non-Accepted one counts as a bug. Accepted on a problem with steps starts step 4 Review (optional, for bonus): the solve clock stops there (review time never counts toward the target or the time part), his page shows "Step 4 · Review (optional)" with Skip, and the result carries review_started: true."""
     hid = _open_handout(ctx)
     if hid is None:
         return {"error": "no open problem"}

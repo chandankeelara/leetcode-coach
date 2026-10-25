@@ -8,17 +8,27 @@ over a Handout row (no DB access); service.py does the writes.
   service.understood). The coach can force it only with clock(phase, force=True).
 * approach -> code when the coach calls unlock_editor (lock_editor goes back to approach).
 * A reset zeroes every step and re-arms the per-step checkpoints.
+* Step 4 "Review" (optional, unbudgeted): starts when `judge` returns Accepted (service.
+  start_review). The solve clock STOPS there (clock_state "stopped": the code step and the
+  total are frozen), so review time never counts toward the target or the time part. Review
+  has its own clock (review_started_at -> review_s). It ends when he presses "Skip review"
+  (review_state "skipped") or when the attempt is logged ("done").
 
 Budgets: the coach sets understand + approach at hand_out (phase_budget; a code value there is
 provisional) and the code step at unlock_editor (code_min, 2-40 min, coach/scoring.py). The
 server clamps the hand_out total by difficulty and each step to >= 1 min. Default = difficulty base x rank factor (x 0.8 for a
 problem he has attempted before), split 15 / 30 / 55 %.
 """
+from datetime import datetime
+
 from . import clock as clk
 
 PHASES = ("understand", "approach", "code")
 TITLES = {"understand": "Understand the question", "approach": "Approach", "code": "Code"}
 DONE = {"understand": "Understood", "approach": "Approach", "code": "Code"}
+REVIEW = "review"
+REVIEW_TITLE = "Review (optional)"
+REVIEW_STATES = ("open", "done", "skipped")
 
 BASE_MIN = {"E": 10, "M": 15, "H": 35}
 TOTAL_RANGE = {"E": (5, 20), "M": (8, 35), "H": (15, 60)}
@@ -133,10 +143,70 @@ def due_phase_checkpoint(h, now=None):
     return cur if seconds(h, now)[cur] >= budget * 60 else None
 
 
+# ---- step 4: review (after Accepted) -------------------------------------------------------
+def in_review(h):
+    return getattr(h, "phase_label", None) == REVIEW
+
+
+def review_open(h):
+    return in_review(h) and getattr(h, "review_state", None) == "open"
+
+
+def review_seconds(h, now=None):
+    """Seconds on the review clock: running while open, banked once it ended."""
+    if review_open(h) and getattr(h, "review_started_at", None):
+        now = now or datetime.now()
+        return max(0, int((now - h.review_started_at).total_seconds()))
+    return int(getattr(h, "review_s", None) or 0)
+
+
+def start_review(h, now=None):
+    """Accepted: bank the current step, STOP the solve clock and start the review clock.
+    Only on a handout with steps, once (a second Accepted is a no-op). Mutates h; returns the
+    banked step seconds, or None when nothing started."""
+    if not has_steps(h) or getattr(h, "review_state", None) is not None:
+        return None
+    now = now or datetime.now()
+    banked = seconds(h, now)
+    solve_s = clk.elapsed_s(h, now)
+    h.phase_elapsed = banked
+    h.clock_accum_s, h.clock_anchor, h.clock_state = solve_s, now, clk.STOPPED
+    h.phase_label = REVIEW
+    h.phase_start_s = solve_s
+    h.review_state, h.review_started_at, h.review_s = "open", now, 0
+    return banked
+
+
+def end_review(h, how, now=None):
+    """End an open review: how = done | skipped. Banks review_s. False if none was open."""
+    if how not in ("done", "skipped"):
+        raise ValueError("review ends as done or skipped")
+    if not review_open(h):
+        return False
+    h.review_s = review_seconds(h, now)
+    h.review_state = how
+    return True
+
+
+def review_block(h, now=None):
+    """{state, seconds} of the review step, or None when it was never offered."""
+    st = getattr(h, "review_state", None)
+    if st is None:
+        return None
+    return {"state": st, "seconds": review_seconds(h, now)}
+
+
 def state(h, now=None):
     """The step block of the page's clock: None for a handout without steps."""
     if not has_steps(h):
         return None
+    if in_review(h):
+        secs = seconds(h, now)
+        b = h.phase_budget
+        return {"current": REVIEW, "index": len(PHASES) + 1, "of": len(PHASES),
+                "title": REVIEW_TITLE, "budget": {k: b.get(k) for k in PHASES},
+                "seconds": secs, "review": review_block(h, now),
+                "done": [{"phase": k, "label": DONE[k], "seconds": secs[k]} for k in PHASES]}
     cur = current(h)
     secs = seconds(h, now)
     b = h.phase_budget

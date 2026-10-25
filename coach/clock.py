@@ -12,10 +12,17 @@ from datetime import datetime
 ACTIONS = ("start", "pause", "resume", "reset", "target", "phase")
 CHECKPOINTS = (50, 100, 150)        # % of target; one synthetic event each per handout
 TARGET_MIN, TARGET_MAX = 1, 180
+# clock_state "stopped": the solve is over (Accepted -> the review step, coach/steps.py). The
+# coach's clock is frozen for good; no clock action restarts it.
+STOPPED = "stopped"
 
 
 def running(h):
     return (h.clock_state or "running") == "running"
+
+
+def stopped(h):
+    return h.clock_state == STOPPED
 
 
 def anchor(h):
@@ -89,14 +96,15 @@ def state(h, now=None, events=()):
     rec = record(events, now)
     a = anchor(h)
     return {
-        "state": "running" if running(h) else "paused",
+        "state": "running" if running(h) else (STOPPED if stopped(h) else "paused"),
         "elapsed_s": elapsed_s(h, now),
         "wall_s": wall_s(h, now),
         "target_min": h.target_min,
         "phase": h.phase_label or None,
         "anchor_iso": a.isoformat() if a else None,
         "accum_s": h.clock_accum_s or 0,
-        "pause_reason": (_last_pause_reason(events) if not running(h) else None),
+        "pause_reason": (_last_pause_reason(events) if not running(h) and not stopped(h)
+                         else None),
         "pauses": len(rec["pauses"]),
         "resets": len(rec["resets"]),
     }

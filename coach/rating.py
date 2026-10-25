@@ -9,7 +9,8 @@ default of its label (E 1000 / M 1400 / H 1800). Bands a rating must fall in: E 
 M 1200-1900, H 1700-2600. No crowd adjustment.
 
 LIVE attempts (with a handout) are scored by the COACH after logging (score_attempt ->
-apply_coach): each part 0..1 with one reason, same weights, minus a hints deduction 0..0.3.
+apply_coach): each part 0..1 with one reason, same weights, minus a hints deduction 0..0.3,
+plus an optional review bonus (step 4, after Accepted) up to 0.10: actual up to 1.10.
 The formula below rates only placement replay and attempts logged without a handout.
 
 formula actual (0..1) = sum of weighted parts, minus 0.1 per hint (at most 0.3), floor 0; abandoned = 0:
@@ -225,6 +226,12 @@ COACH_PARTS = ("understand", "approach", "first_submit", "quality", "time")
 COACH_WEIGHTS = {"understand": 0.10, "approach": 0.25, "first_submit": 0.30, "quality": 0.15,
                  "time": 0.20}
 WHY_MAX = 200
+# Step 4 Review (after Accepted, optional): a BONUS on top of the solve actual. Any subset of
+# the items; an item not asked is absent, never 0. actual = solve actual + bonus, so up to
+# 1.10; Elo takes actual > 1 as it is (expected stays <= 1).
+REVIEW_WEIGHTS = {"complexity": 0.03, "edge_case": 0.03, "alternative": 0.02,
+                  "follow_up": 0.02}
+REVIEW_CAP = 0.10
 
 
 def _unit(v, name, hi=1.0):
@@ -256,6 +263,9 @@ def coach_score(parts, abandoned=False):
     if not isinstance(parts, dict):
         raise RatingRefused("parts must be an object")
     want = set(COACH_PARTS) | {"hints"}
+    review = parts.get("review")
+    if "review" in parts:
+        parts = {k: v for k, v in parts.items() if k != "review"}
     if set(parts) != want:
         miss, extra = sorted(want - set(parts)), sorted(set(parts) - want)
         raise RatingRefused("parts needs exactly " + ", ".join(COACH_PARTS) + ", hints"
@@ -274,12 +284,62 @@ def coach_score(parts, abandoned=False):
         raise RatingRefused("hints: {deduction, why}")
     ded = _unit(hp.get("deduction"), "hints.deduction", HINT_MAX)
     raw = sum(v["points"] for v in out.values())
-    actual = 0.0 if abandoned else max(0.0, raw - ded)
-    return actual, {"parts": out, "hints": {"deduction": round(ded, 3),
-                                            "why": _why(hp.get("why"), "hints")},
-                    "raw": round(raw, 3), "hint_penalty": round(ded, 3),
-                    "abandoned": bool(abandoned), "actual": round(actual, 3),
-                    "scored_by": "coach"}
+    solve = 0.0 if abandoned else max(0.0, raw - ded)
+    rv = None
+    if review is not None:
+        if abandoned:
+            raise RatingRefused("review: an abandoned solve has no review")
+        rv = review_bonus(review)
+    actual = solve + (rv["bonus"] if rv else 0.0)
+    bd = {"parts": out, "hints": {"deduction": round(ded, 3),
+                                  "why": _why(hp.get("why"), "hints")},
+          "raw": round(raw, 3), "hint_penalty": round(ded, 3),
+          "abandoned": bool(abandoned), "actual": round(actual, 3), "scored_by": "coach"}
+    if rv:
+        bd["review"] = rv
+        bd["solve_actual"] = round(solve, 3)
+    return actual, bd
+
+
+def review_bonus(review):
+    """{items: {name: {weight, score, points, why}}, bonus, cap} from the coach's review part
+    {complexity|edge_case|alternative|follow_up: {score 0-1, why}} (any non-empty subset).
+    bonus = sum of weight x score, capped at REVIEW_CAP. RatingRefused on a bad item."""
+    names = ", ".join(REVIEW_WEIGHTS)
+    if not isinstance(review, dict) or not review:
+        raise RatingRefused(f"review: {{{names}: {{score, why}}}}, only the items you "
+                            "asked; leave review out if none")
+    extra = sorted(set(review) - set(REVIEW_WEIGHTS))
+    if extra:
+        raise RatingRefused(f"review: unknown {', '.join(extra)} (one of {names})")
+    items = {}
+    for k in REVIEW_WEIGHTS:
+        if k not in review:
+            continue
+        p = review[k]
+        if not isinstance(p, dict):
+            raise RatingRefused(f"review.{k}: {{score, why}}")
+        sc = _unit(p.get("score"), f"review.{k}.score")
+        items[k] = {"weight": REVIEW_WEIGHTS[k], "score": round(sc, 3),
+                    "points": round(REVIEW_WEIGHTS[k] * sc, 3),
+                    "why": _why(p.get("why"), f"review.{k}")}
+    bonus = min(REVIEW_CAP, sum(v["points"] for v in items.values()))
+    return {"items": items, "bonus": round(bonus, 3), "cap": REVIEW_CAP}
+
+
+def _review_allowed(s, att):
+    """RatingRefused when the attempt's handout skipped its review or never had an Accepted
+    submission (review is only after Accepted)."""
+    from .models import Handout, Submission
+    if att.handout_id is None:
+        return
+    h = s.get(Handout, att.handout_id)
+    if h is not None and h.review_state == "skipped":
+        raise RatingRefused("review: he skipped the review; score without it")
+    acc = s.scalars(select(Submission.id).where(Submission.handout_id == att.handout_id,
+                                                Submission.verdict == "Accepted")).first()
+    if acc is None:
+        raise RatingRefused("review: only after an Accepted submission; score without it")
 
 
 def apply_coach(s, att, parts, summary=""):
@@ -291,6 +351,8 @@ def apply_coach(s, att, parts, summary=""):
             return attach_reasons(s, prev, parts, summary)      # abandoned: reasons only, once
         raise RatingRefused("this attempt is already scored; a score is final")
     actual, bd = coach_score(parts, abandoned=att.outcome == "abandoned")
+    if bd.get("review"):
+        _review_allowed(s, att)
     summ = " ".join(str(summary or "").split())
     if len(summ) > WHY_MAX:
         raise RatingRefused(f"summary: at most {WHY_MAX} characters")
@@ -366,6 +428,7 @@ def event_dict(ev, s=None):
             "scored_by": (ev.breakdown or {}).get("scored_by") or "formula",
             "summary": (ev.breakdown or {}).get("summary") or None,
             "reasons_attached": bool((ev.breakdown or {}).get("reasons")),
+            "review": (ev.breakdown or {}).get("review"),
             "at": ev.created_at.isoformat() if ev.created_at else None}
 
 

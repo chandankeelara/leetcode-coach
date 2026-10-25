@@ -139,6 +139,12 @@ class Handout(Base):
     # Code budget set at unlock_editor (coach/scoring.py): the coach's private one-line reason
     # for phase_budget.code, shown on reveal.
     code_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Step 4 "Review" (coach/review.py): starts when judge returns Accepted on a handout with
+    # steps. NULL = never offered; open | done | skipped. Its own clock: review_started_at and
+    # review_s (banked when it ends); never part of the solve clock, the target or the score.
+    review_state: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    review_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    review_s: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class Attempt(Base):

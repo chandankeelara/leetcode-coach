@@ -352,7 +352,8 @@ def judge(user_id, handout_id, extra_cases=None):
     Returns {verdict, first_failure: {input, got, expected, error, size, hidden} | None, passed,
     total, slowest_ms, submission_id}. Verdict is the first failing case in order: a timeout is
     Time Limit Exceeded, an exception or crash Runtime Error, a wrong value Wrong Answer. The
-    verdict is stored on the submission so session_summary can count it. ValueError when there
+    verdict is stored on the submission so session_summary can count it. Accepted on a handout
+    with steps starts step 4 Review (service.start_review) and adds review_started: True. ValueError when there
     is no submission, no spec or no cases."""
     extra = []
     if extra_cases is not None:
@@ -420,6 +421,10 @@ def judge(user_id, handout_id, extra_cases=None):
         row.verdict, row.judged = verdict, out
         s.add(TestRun(user_id=user_id, handout_id=handout_id, who="coach", code=code,
                       results=results, created_at=datetime.now()))
+    if verdict == "Accepted":
+        from .service import start_review      # step 4 Review (coach/steps.py); stepped only
+        if start_review(user_id, handout_id):
+            out["review_started"] = True
     return out
 
 

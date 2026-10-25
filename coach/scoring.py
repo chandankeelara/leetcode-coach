@@ -1,6 +1,7 @@
 """The coach scores the solve; the coach sets the code budget.
 
 * `score_attempt(user_id, handout_id, parts, summary)`: after log_attempt, ONCE per attempt.
+  parts may carry `review` (step 4, after Accepted): a bonus up to 0.10 on top (rating.py).
   The coach gives each part a score 0..1 and one plain reason (rating.coach_score); the
   server computes expected (Elo vs the problem's rating), K and the MMR delta, and stores the
   rating_events row with breakdown.scored_by = "coach". The server does not second-guess it.
@@ -59,6 +60,9 @@ def score_attempt(user_id, handout_id, parts, summary=""):
         # the reasons as he wrote them (before whitespace is collapsed); raising rolls back
         texts = [str((v or {}).get("why") or "") for v in parts.values()
                  if isinstance(v, dict)] + [str(summary or "")]
+        rv = parts.get("review") if isinstance(parts, dict) else None
+        if isinstance(rv, dict):
+            texts += [str((v or {}).get("why") or "") for v in rv.values() if isinstance(v, dict)]
         _guard(texts, u.username if u else None)
         from .service import emit
         emit(user_id, "rating", h.id, s)         # the open reveal page fills its rating card
