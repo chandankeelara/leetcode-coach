@@ -83,7 +83,7 @@ def offer_hint(user_id, handout_id, hint, stage, level=1):
         h = _open_handout(s, user_id, handout_id)
         title = s.get(Problem, h.problem_number).title
         text = hint + "\n" + stage
-        bad = svc.leak_words(text, title, s)
+        bad = svc.leak_words(text, title, s, h)
         if bad:
             raise ValueError("leak: " + ", ".join(bad))
         svc.rule_zero_check(s, user_id, text, h)

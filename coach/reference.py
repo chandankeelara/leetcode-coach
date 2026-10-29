@@ -257,7 +257,12 @@ def resolve_cases(number, cases, mode, where="case"):
                                 f"large (size {_size(c)}); give it an explicit expected")
             continue
         if r["error"]:
-            raise ValueError(f"{where} {i}: the reference fails on this input: {r['error']}")
+            inp = {k: c[k] for k in ("args", "ops") if k in c}
+            raise ValueError(
+                f"{where} {i}: the reference fails on this input: {r['error']}. Input: "
+                f"{_short(inp, 200)}. Fix set_reference to handle this input (e.g. empty / "
+                "single element) and resend it with replace=true and a reason, or give this "
+                "case an explicit expected")
         if "expected" in c:
             if not runner.compare(r["got"], c["expected"], c.get("unordered", False)):
                 raise ValueError(f"{where} {i}: your expected {_short(c['expected'], 120)} "
@@ -738,7 +743,7 @@ def _guard(s, user_id, h, texts):
     text = "\n".join(t for t in texts if t)
     if not text.strip():
         return
-    bad = svc.leak_words(text, s.get(Problem, h.problem_number).title, s)
+    bad = svc.leak_words(text, s.get(Problem, h.problem_number).title, s, h)
     if bad:
         raise ValueError("leak: " + ", ".join(bad))
     svc.rule_zero_check(s, user_id, text, h)

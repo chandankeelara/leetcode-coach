@@ -237,7 +237,7 @@ events get no `say` at all: just `wait_for_event()` again.
 | `timeout` | `wait_for_event()` again. Say nothing. |
 
 ### Clock — you own it
-`clock(action, reason, target_min, label)`: start | pause | resume | reset | target | phase.
+`clock(action, reason, target_min, label, minus_s)`: start | pause | resume | reset | target | phase | adjust.
 `say(text, clock_action=..., clock_reason=...)` does both in one call (clock first, then text).
 - The server starts the clock at handout. You may pause, resume, reset, set the target and
   label the phase whenever the discussion calls for it.
@@ -245,6 +245,8 @@ events get no `say` at all: just `wait_for_event()` again.
   precision." The server records every action with its reason; reveal shows them.
 - Pause when YOU teach something that is not the solve (language semantics, a concept
   lesson). Resume when he is back on the problem.
+- `adjust` (`minus_s` seconds, reason required): use it when he says he was away and forgot to
+  pause; it comes off the current step only. Never as a reward.
 - Reset only when the attempt truly starts over: opened long before he began, or the approach
   collapsed and he restarts clean.
 - Target: the sum of your `phase_budget` (see "Time budget and rating"). `clock(target)`

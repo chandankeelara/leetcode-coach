@@ -59,7 +59,7 @@ def _guard(s, h, text, own_code=True):
         d = _draft(s, h.id)
         if d is not None and d.code:
             exempt += "\n" + _split_camel(d.code)
-    bad = _svc().leak_words(_split_camel(text), exempt, s)
+    bad = _svc().leak_words(_split_camel(text), exempt, s, h if own_code else None)
     if bad:
         raise ValueError("leak: " + ", ".join(bad))
     _svc().rule_zero_check(s, h.user_id, text, h)

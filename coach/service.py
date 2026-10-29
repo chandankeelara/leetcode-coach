@@ -236,8 +236,8 @@ def _clock_events(s, handout_id):
 
 
 def clock(user_id, handout_id, action, reason="", target_min=None, label=None, now=None,
-          force=False):
-    """The coach owns the clock. action: start | pause | resume | reset | target | phase.
+          force=False, minus_s=None):
+    """The coach owns the clock. action: start | pause | resume | reset | target | phase | adjust.
       start   running from now (no-op if running; sets first_started_at if unset)
       pause   bank elapsed, freeze. No reason -> stored "" and a "warning": "say why"
       resume  running from now (no-op if running)
@@ -251,6 +251,9 @@ def clock(user_id, handout_id, action, reason="", target_min=None, label=None, n
               code. Leaving `understand` is the student's button (service.understood); the
               coach may only do it with force=True ("he said in chat he understood and the
               button failed"). Going back to understand also needs force.
+      adjust  minus_s (int > 0) seconds off the CURRENT step (and so the total), never below
+              0, earlier steps untouched; a reason is required ("stepped out without
+              pausing"). Recorded {minus_s: applied, requested, step}; reveal shows it.
     Every action writes a clock_events row and emits `clock`. ValueError unless the handout
     is his and open, or on a bad action/target. Returns clock.state(...) + handout_id
     (+ "warning")."""
@@ -284,6 +287,34 @@ def clock(user_id, handout_id, action, reason="", target_min=None, label=None, n
                 stp.on_reset(h)
             if not reason:
                 warning = "say why"
+        elif action == "adjust":
+            if not reason:
+                raise ValueError("adjust needs a reason (why the time comes off)")
+            if isinstance(minus_s, bool) or not isinstance(minus_s, (int, float))                     or int(minus_s) != minus_s or minus_s <= 0:
+                raise ValueError("adjust needs minus_s, whole seconds > 0")
+            req = int(minus_s)
+            elapsed = clk.elapsed_s(h, now)
+            if stp.has_steps(h) and stp.current(h):
+                cur = stp.current(h)
+                run_part = max(0, elapsed - (h.phase_start_s or 0))
+                banked = int((h.phase_elapsed or {}).get(cur, 0))
+                amt = min(req, run_part + banked)
+                take_bank = amt - min(amt, run_part)
+                if take_bank:
+                    pe = dict(h.phase_elapsed or {})
+                    pe[cur] = banked - take_bank
+                    h.phase_elapsed = pe
+                    h.phase_start_s = max(0, (h.phase_start_s or 0) - take_bank)
+                step = cur
+            else:
+                amt, step = min(req, elapsed), None
+            acc = (h.clock_accum_s or 0) - amt
+            if acc < 0:                    # the cut reaches into the running segment
+                if clk.running(h):
+                    h.clock_anchor = clk.anchor(h) + timedelta(seconds=-acc)
+                acc = 0
+            h.clock_accum_s = acc
+            value = {"minus_s": amt, "requested": req, "step": step}
         elif action == "target":
             if isinstance(target_min, bool):
                 raise ValueError("target_min must be 1..180")
@@ -585,15 +616,23 @@ def _leak_terms(s):
     return terms
 
 
-def leak_words(text, title, s):
+def leak_words(text, title, s, h=None):
     """Technique / difficulty words in `text`. A term the problem's own title contains is fine
-    (the title is shown anyway: 'Reverse Linked List' may say 'linked list')."""
+    (the title is shown anyway: 'Reverse Linked List' may say 'linked list'). With `h`, an OPEN
+    handout: a term he has already written himself for it (chat, approach, code draft, replies)
+    is fine too. Leave h=None for text that must never name a technique (the statement)."""
     low = (text or "").lower()
     low_title = (title or "").lower()
+    his = None
     hits = []
     for display, rx in _leak_terms(s).items():
         m = rx.search(low)
         if m and not rx.search(low_title):
+            if h is not None and h.status == "open":
+                if his is None:
+                    his = _split_ident(_his_text(s, h)).lower()
+                if rx.search(his):
+                    continue
             hits.append(m.group(0).strip())
     return sorted(set(hits))
 
@@ -786,14 +825,14 @@ def show_visual(user_id, handout_id, kind, spec):
         if h is None or h.user_id != user_id:
             raise ValueError(f"no handout {handout_id}")
         title = s.get(Problem, h.problem_number).title
-        bad = leak_words("\n".join(viz.texts(kind, spec)), title, s)
+        bad = leak_words("\n".join(viz.texts(kind, spec)), title, s, h)
         if bad:
             raise ValueError("leak: " + ", ".join(bad))
         rule_zero_check(s, user_id, "\n".join(viz.texts(kind, spec)), h)
         html_out = viz.render(kind, spec)
         cap = viz.caption(spec)
         label = cap or viz.KIND_LABEL[kind]
-        if leak_words(label, title, s):
+        if leak_words(label, title, s, h):
             label = "illustration"
         v = Visual(user_id=user_id, handout_id=h.id, kind=kind, spec=spec, html=html_out,
                    caption=cap)
@@ -1144,14 +1183,28 @@ def burn_pattern(user_id, slug, reason="", today=None):
 
 
 # ---- events and chat -----------------------------------------------------------------------
+SUBMIT_DEDUP_S = 10      # an identical code submission for a handout this soon is the same one
+
+
 def push_event(user_id, kind, payload=None):
-    """Web UI -> queue. Returns the event id."""
+    """Web UI -> queue. Returns the event id. A `submission` with the same code as one for the
+    same handout in the last SUBMIT_DEDUP_S seconds is not queued again: the existing event's
+    id comes back."""
     with session_scope() as s:
-        e = Event(user_id=user_id, kind=kind, payload=payload or {})
-        s.add(e)
         p = payload or {}
-        if (kind == "submission" and p.get("code") and p.get("handout_id") is not None
-                and getattr(s.get(Handout, p["handout_id"]), "user_id", None) == user_id):
+        mine = (kind == "submission" and p.get("code") and p.get("handout_id") is not None
+                and getattr(s.get(Handout, p["handout_id"]), "user_id", None) == user_id)
+        if mine:
+            since = datetime.now() - timedelta(seconds=SUBMIT_DEDUP_S)
+            for old in s.scalars(select(Event).where(
+                    Event.user_id == user_id, Event.kind == "submission",
+                    Event.created_at >= since).order_by(Event.id.desc())):
+                q = old.payload or {}
+                if q.get("handout_id") == p["handout_id"] and q.get("code") == p["code"]:
+                    return old.id             # a double trigger: nothing new is queued
+        e = Event(user_id=user_id, kind=kind, payload=p)
+        s.add(e)
+        if mine:
             s.add(Submission(user_id=user_id, handout_id=p["handout_id"], code=p["code"]))
         s.flush()
         return e.id
@@ -1449,6 +1502,18 @@ def _attempt_row(a):
             "notes": a.notes, "wall_min": a.wall_min, "clock_note": a.clock_note}
 
 
+def _verdicts(subs):
+    """Verdict per submission, oldest first. An unjudged row whose identical code was judged in
+    a later row (a double submit) shows that verdict, never null."""
+    out = []
+    for i, x in enumerate(subs):
+        v = x.verdict
+        if v is None:
+            v = next((y.verdict for y in subs[i + 1:] if y.code == x.code and y.verdict), None)
+        out.append(v)
+    return out
+
+
 def session_summary(user_id, today=None):
     """Everything today produced, so the coach writes the log without guessing. Progress
     talk: session end only. Pattern and slot appear only for LOGGED handouts (RULE ZERO).
@@ -1493,7 +1558,7 @@ def session_summary(user_id, today=None):
                 "submissions": {"total": len(subs),
                                 "not_accepted": sum(1 for x in subs if x.verdict
                                                     and x.verdict != "Accepted"),
-                                "verdicts": [x.verdict for x in subs]},
+                                "verdicts": _verdicts(subs)},
                 "handout_id": h.id, "number": p.number, "title": p.title,
                 "hints_revealed": _hints.hints_revealed(s, h.id),
                 "handed_at": h.handed_at.isoformat(), "target_min": h.target_min,

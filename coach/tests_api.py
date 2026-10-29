@@ -60,7 +60,7 @@ def _clean_case(c, i):
 def _guard(s, h, cases):
     title = s.get(Problem, h.problem_number).title
     text = "\n".join(str(c.get(k) or "") for c in cases for k in TEXT_FIELDS)
-    bad = _svc().leak_words(text, title, s)
+    bad = _svc().leak_words(text, title, s, h)
     if bad:
         raise ValueError("leak: " + ", ".join(bad))
     _svc().rule_zero_check(s, h.user_id, text, h)
@@ -419,6 +419,10 @@ def judge(user_id, handout_id, extra_cases=None):
     with session_scope() as s:
         row = s.get(Submission, sub_id)
         row.verdict, row.judged = verdict, out
+        for twin in s.scalars(select(Submission).where(      # an identical earlier row (a double
+                Submission.handout_id == handout_id, Submission.code == code,    # trigger) that
+                Submission.id < sub_id, Submission.verdict.is_(None))):          # was never judged
+            twin.verdict, twin.judged = verdict, out
         s.add(TestRun(user_id=user_id, handout_id=handout_id, who="coach", code=code,
                       results=results, created_at=datetime.now()))
     if verdict == "Accepted":

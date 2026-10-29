@@ -419,7 +419,11 @@
     var ln = parseInt(b.dataset.line, 10) - 1;
     if (cm) { cm.focus(); cm.setCursor({ line: Math.max(0, ln), ch: 0 }); cm.scrollIntoView(null, 120); }
   });
-  function setJudging(on) { if (judging) judging.hidden = !on; }
+  /* One submit at a time: the button stays off from the click until the coach's next message
+     (setJudging(false)); a second Ctrl+Enter / click meanwhile is ignored. */
+  var submitLock = false;
+  function lockSubmit(on) { submitLock = on; submitBtn.disabled = on; }
+  function setJudging(on) { if (judging) judging.hidden = !on; if (!on) lockSubmit(false); }
   function submitted() {
     root.classList.add("has-submission");
     submitBtn.classList.remove("btn-primary");
@@ -429,12 +433,14 @@
     if (stage() !== "code") { toast("Code opens when your coach says the idea holds.", "warn"); setTab("think", true); return; }
     var code = getCode();
     if (!code.trim()) { toast("Nothing to submit yet.", "warn"); return; }
+    if (submitLock) return;
+    lockSubmit(true);
     submitBtn.classList.add("busy");
     post("/solve/submit", { code: code }).then(function (r) {
       return r.text().then(function (t) { return { ok: r.ok, html: t }; });
     }).then(function (res) {
       submitBtn.classList.remove("busy");
-      if (!res.ok || res.html.indexOf('class="err"') !== -1) { toast("Not submitted. Need code.", "error"); return; }
+      if (!res.ok || res.html.indexOf('class="err"') !== -1) { lockSubmit(false); toast("Not submitted. Need code.", "error"); return; }
       clearMarks();
       lintOut.innerHTML = res.html;
       markLines();
@@ -446,6 +452,7 @@
       pollSoon();
     }).catch(function () {
       submitBtn.classList.remove("busy");
+      lockSubmit(false);
       toast("Network error. Not submitted.", "error");
     });
   }
@@ -490,7 +497,7 @@
     clearTimeout(waitT);
     waitT = setTimeout(stopTyping, 180000);
   }
-  function stopTyping() { waitingSince = null; typing.hidden = true; clearTimeout(waitT); }
+  function stopTyping() { waitingSince = null; typing.hidden = true; clearTimeout(waitT); if (typeof lockSubmit === "function") lockSubmit(false); }
 
   function append(html) {
     var tpl = document.createElement("template");

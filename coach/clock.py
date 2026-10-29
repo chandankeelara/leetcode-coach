@@ -9,7 +9,7 @@ first_started_at = handed_at.
 """
 from datetime import datetime
 
-ACTIONS = ("start", "pause", "resume", "reset", "target", "phase")
+ACTIONS = ("start", "pause", "resume", "reset", "target", "phase", "adjust")
 CHECKPOINTS = (50, 100, 150)        # % of target; one synthetic event each per handout
 TARGET_MIN, TARGET_MAX = 1, 180
 # clock_state "stopped": the solve is over (Accepted -> the review step, coach/steps.py). The
@@ -57,7 +57,7 @@ def record(events, end=None):
     "resets": [{reason, at}]}. A pause counts only when the clock was running; it lasts until
     the next resume / start / reset (or `end`, default now, if still paused)."""
     end = end or datetime.now()
-    pauses, resets = [], []
+    pauses, resets, adjusts = [], [], []
     run, open_p = True, None
     for e in events:
         act, at, why = _get(e, "action"), _get(e, "at"), _get(e, "reason") or ""
@@ -66,11 +66,16 @@ def record(events, end=None):
         elif act in ("resume", "start", "reset") and not run:
             pauses.append(_closed(open_p, at))
             run, open_p = True, None
+        if act == "adjust":
+            v = _get(e, "value") or {}
+            adjusts.append({"reason": why, "minutes": round((v.get("minus_s") or 0) / 60),
+                            "minus_s": v.get("minus_s") or 0, "step": v.get("step"),
+                            "at": at.isoformat() if at else None})
         if act == "reset":
             resets.append({"reason": why, "at": at.isoformat() if at else None})
     if open_p is not None:
         pauses.append(_closed(open_p, end))
-    return {"pauses": pauses, "resets": resets}
+    return {"pauses": pauses, "resets": resets, "adjusts": adjusts}
 
 
 def _closed(p, until):
@@ -81,12 +86,15 @@ def _closed(p, until):
 def note(rec):
     """'2 pauses (float precision 4 min; aside 1 min), 1 reset' or '' when nothing happened."""
     bits = []
-    ps, rs = rec["pauses"], rec["resets"]
+    ps, rs, ads = rec["pauses"], rec["resets"], rec.get("adjusts") or []
     if ps:
         inner = "; ".join(f"{p['reason'] or 'no reason'} {p['minutes']} min" for p in ps)
         bits.append(f"{len(ps)} pause{'s' if len(ps) != 1 else ''} ({inner})")
     if rs:
         bits.append(f"{len(rs)} reset{'s' if len(rs) != 1 else ''}")
+    if ads:
+        inner = "; ".join(f"−{a['minutes']} min away: {a['reason']}" for a in ads)
+        bits.append(f"{len(ads)} adjust{'s' if len(ads) != 1 else ''} ({inner})")
     return ", ".join(bits)
 
 

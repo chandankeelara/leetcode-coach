@@ -383,11 +383,13 @@ def reset_timer(ctx) -> dict:
         return {"error": str(e)}
 
 
-def _clock(ctx, action, reason="", target_min=None, label=None, force=False):
+def _clock(ctx, action, reason="", target_min=None, label=None, force=False, minus_s=None):
     hid = _open_handout(ctx)
     if hid is None:
         return {"error": "no open problem"}
     kw = {"force": True} if force else {}
+    if minus_s is not None:
+        kw["minus_s"] = minus_s
     try:
         return _jsonable(ctx.svc.clock(ctx.user_id, hid, action, reason=reason,
                                        target_min=target_min, label=label, **kw))
@@ -397,9 +399,9 @@ def _clock(ctx, action, reason="", target_min=None, label=None, force=False):
 
 @tool
 def clock(ctx, action: str, reason: str = "", target_min: int | None = None,
-          label: str | None = None, force: bool = False) -> dict:
-    """Control his clock: start | pause | resume | reset | target | phase. Say why in chat when you pause or reset. phase label on a problem with steps: understand | approach | code. He ends the understand step himself (his button); force=true only if he said in chat he understood and the button failed. unlock_editor moves approach -> code."""
-    return _clock(ctx, action, reason, target_min, label, force)
+          label: str | None = None, force: bool = False, minus_s: int | None = None) -> dict:
+    """Control his clock: start | pause | resume | reset | target | phase. Say why in chat when you pause or reset. action="adjust" (minus_s = whole seconds, reason required) takes time off the CURRENT step and the total, for a gap he was away without pausing; never below 0, earlier steps untouched; never a reward. phase label on a problem with steps: understand | approach | code. He ends the understand step himself (his button); force=true only if he said in chat he understood and the button failed. unlock_editor moves approach -> code."""
+    return _clock(ctx, action, reason, target_min, label, force, minus_s)
 
 
 @tool
